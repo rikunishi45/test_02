@@ -10,6 +10,14 @@
 
 # ガードレール自体。ここを自動マージ可にすると、AIが自分の制約を緩める
 # 変更を無人でマージできてしまう。
-/.github/    @rikunishi45
-/.claude/    @rikunishi45
-/CLAUDE.md   @rikunishi45
+/.github/          @rikunishi45
+/.claude/          @rikunishi45
+/CLAUDE.md         @rikunishi45
+
+# 人間が手で実行するブートストラップ。AIが書き換えられると、
+# 人間の手で任意の gh api が走る。
+/setup-github.sh   @rikunishi45
+
+# src/ に対する壁の定義。AIがここを書き換えられると、中身を exit 0 に
+# して壁を無効化できる。テスト本体（tests/）は保護しない。
+/run-tests.sh      @rikunishi45

@@ -13,6 +13,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    # この name もルールセットの context。secret-scan と同じ注意が要る。
+    name: テスト
+    runs-on: ubuntu-latest
+    # ハングしたテストがジョブを6時間占有するのを防ぐ。
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: テストを実行する
+        # fail closed。src/ に人間のレビューは入らないため、テストがCIの唯一の壁になる。
+        # 壁の定義（run-tests.sh）は保護パスに置いてある。ここをAIが自由に書けると
+        # 中身を exit 0 にして壁を無効化できるため。
+        #
+        # src/ が無い始動直後は通る。最初の実装コードで初めて強制される。
+        run: |
+          set -euo pipefail
+          if [ -x ./run-tests.sh ]; then
+            ./run-tests.sh
+          elif [ -e ./run-tests.sh ]; then
+            echo "::error::run-tests.sh に実行権限が無い。chmod +x して commit すること。"
+            exit 1
+          elif [ -d src ]; then
+            echo "::error::src/ があるのに run-tests.sh が無い。src/ に人間のレビューは"
+            echo "::error::入らないため、テストがCIの唯一の壁になる。run-tests.sh を追加すること。"
+            exit 1
+          else
+            echo "src/ も run-tests.sh も無い。検証対象なし。"
+          fi
+
   secret-scan:
     # この name はルールセット main-ci の required_status_checks に
     # context として文字列で登録してある。変えるとチェックが永久に

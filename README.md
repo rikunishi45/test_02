@@ -20,7 +20,7 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
     自動マージ                                    人間がマージするまで待機
 ```
 
-**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`
+**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`、`setup-github.sh`、`run-tests.sh`
 
 判定しているのは `automerge.yml`。保護パスを含むPRには自動マージを予約しない。AIは
 `gh pr merge` を持たないため、予約されなければマージ経路が存在しない。
@@ -36,10 +36,22 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 | `.claude/settings.json` | モデル割り当て（Opus/Sonnet）と権限（allow/deny） |
 | `.github/CODEOWNERS` | レビュー要求の宛先（壁ではない） |
 | `.github/workflows/automerge.yml` | 保護パスを判定し、含まないPRにのみ自動マージを予約する |
-| `.github/workflows/ci.yml` | 秘密情報スキャン |
+| `.github/workflows/ci.yml` | テスト（`run-tests.sh`）と秘密情報スキャン |
+| `setup-github.sh` | GitHub側の設定を投入・同期する。人間が実行する |
+| `run-tests.sh` | `src/` に対する壁の定義。`src/` を作るときに追加する |
 
 保護パスの定義は3か所に写っている。**片方だけ変えると穴が開く。**
 ①`CLAUDE.md` の表、②`automerge.yml` の grep パターン、③`.github/CODEOWNERS`。
+
+## `src/` に対する壁
+
+`src/` は保護パスに含めない（実装のたびに人間のマージが発生すると自走の目的を損なうため）。
+代わりに CI の `テスト` ジョブが fail closed で壁になる。詳細は `CLAUDE.md` の
+「テストの壁」を参照。
+
+`run-tests.sh` を保護パスにしてあるので、そこに書いた下限（カバレッジ閾値など）はAIが
+下げられない。**ただし防げるのは「テストが1本も走らずにマージされる」ことだけで、実装に
+合わせた甘いテストを書いて通すことは防げない。** `tests/` を保護しない以上、構造的に残る。
 
 ## GitHub側の設定
 
@@ -55,16 +67,20 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 `main-review` の `pull_request` ルールは main への直接pushも止める。`bypass_mode` が
 `pull_request` なので、管理者のbypassはPR経由のマージにのみ効き、直接pushには効かない。
 
-### 再構築する場合
+**`ci.yml` のジョブの `name`（`テスト` / `秘密情報スキャン`）は変えない。** ルールセットに
+`context` として文字列で登録されている。変えると必須チェックが永久に報告されず、全PRが
+マージ不能で固まる。
+
+### 再構築・同期する場合
 
 ```bash
-gh api -X PATCH repos/rikunishi45/test_02 \
-  -F allow_auto_merge=true -F allow_squash_merge=true \
-  -F allow_merge_commit=false -F allow_rebase_merge=false \
-  -F delete_branch_on_merge=true
-
-gh api -X POST repos/rikunishi45/test_02/rulesets --input .github/rulesets/main-ci.json
-gh api -X POST repos/rikunishi45/test_02/rulesets --input .github/rulesets/main-review.json
+./setup-github.sh
 ```
+
+`.github/rulesets/*.json` が正本で、既存のルールセットは PUT で更新される。冪等。
+
+必須チェックを追加するときは順序を守る。**先に対応するジョブを main の `ci.yml` に入れ、
+その後で `setup-github.sh` を実行する。** 逆順にすると、報告されないチェックを待ち続けて
+全PRが止まる。
 
 `gh api` はAIの `deny` 対象。ガードレールを迂回する経路のため、人間が実行する。
