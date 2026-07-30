@@ -20,7 +20,13 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
     自動マージ                                    人間がマージするまで待機
 ```
 
-**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`（`.github/CODEOWNERS` が正本）
+**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`
+
+判定しているのは `automerge.yml`。保護パスを含むPRには自動マージを予約しない。AIは
+`gh pr merge` を持たないため、予約されなければマージ経路が存在しない。
+
+`CODEOWNERS` は壁ではない。作成者が唯一のコードオーナーだとGitHubは本人にレビューを
+要求しないので、`require_code_owner_review` は実質的に無効化される。
 
 ## 構成
 
