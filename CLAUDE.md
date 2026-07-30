@@ -10,14 +10,13 @@
 
 ## 技術スタック
 
+実コードは未着手。決めた時点でここに記入する。
+
 | レイヤー | 技術 |
 |---|---|
-| 言語 | Python 3 |
-| テストランナー | pytest（`run-tests.sh` で版を固定） |
+| 言語 | 未定 |
+| テストランナー | 未定 |
 | CI | GitHub Actions |
-
-`conftest.py` をルートに置いてある。これがあると pytest がリポジトリルートを `sys.path` に
-入れるので、`tests/` 側で `sys.path` を操作せずに `from src.xxx import ...` が解決する。
 
 ---
 
