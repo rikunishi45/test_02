@@ -1,28 +1,68 @@
 name: Auto-merge
 
-# 全PRに自動マージを予約するだけ。マージしてよいかの判定はしない。
-# 判定はGitHub側のマージ要件（必須チェック＋CODEOWNERS）が行う。
+# 保護パスを含まないPRにだけ自動マージを予約する。
 #
-# - 保護パス外のPR: CI green の時点でGitHubがマージする
-# - 保護パスを含むPR: コードオーナー承認が満たされないので予約されたまま待機し、
-#                     人間が管理者権限でマージする
+# なぜCODEOWNERSに任せないか:
+#   PRの作成者が唯一のコードオーナーの場合、GitHubは本人にレビューを要求しない
+#   （自己承認できないため）。結果 require_code_owner_review が実質的に無効化される。
+#   実測: PR #2（.github/ を含む）が承認なしで自動マージされた。
+#   CODEOWNERSはレビュー要求の宛先としては残すが、壁として数えない。
+#
+# なぜこれで壁になるか:
+#   AIは gh pr merge を deny されており、マージ経路を持たない。このワークフローが
+#   予約しなければ、そのPRは人間がマージするまで開いたままになる。
+#
+# なぜ pull_request_target か:
+#   pull_request はワークフロー定義をPRのhead側から読む。automerge.yml 自体を
+#   書き換えるPRが「書き換え後の自分自身」に判定され、ガードを無効化できてしまう。
+#   pull_request_target は常にベースブランチの定義で走る。PRのコードはチェックアウト
+#   も実行もしないので、pull_request_target の一般的なリスクには当たらない。
 on:
-  pull_request:
-    types: [opened, ready_for_review]
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
-  enable:
+  guard:
     name: 自動マージを予約する
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.pull_request.number }}
+      REPO: ${{ github.repository }}
     steps:
-      - name: gh pr merge --auto
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: gh pr merge "$PR" --auto --squash -R "$REPO"
+      - name: 保護パスを含むか判定する
+        id: guard
+        run: |
+          set -euo pipefail
+          # PR APIの変更ファイル一覧を使う。マージベース基準なので、PR作成後に
+          # ベースが進んでも、そのPRが触っていないファイルは混入しない。
+          gh pr diff "$PR" -R "$REPO" --name-only > changed.txt
+          echo "変更ファイル:"; cat changed.txt
+          if grep -qE '^(\.github/|\.claude/|CLAUDE\.md$)' changed.txt; then
+            echo "protected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "protected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 保護パス外 — 自動マージを予約する
+        if: steps.guard.outputs.protected == 'false'
+        run: |
+          gh pr merge "$PR" --auto --squash -R "$REPO"
+          echo "::notice::保護パス外。必須チェックが全green になった時点でマージされる。"
+
+      - name: 保護パスを含む — 自動マージを解除する
+        if: steps.guard.outputs.protected == 'true'
+        run: |
+          # synchronize 対策。保護パス外だったPRに後から保護パスが足された場合、
+          # 既に予約済みの自動マージをここで取り消す。予約が無ければ何もしない。
+          gh pr merge "$PR" --disable-auto -R "$REPO" 2>/dev/null || true
+          echo "::notice::保護パスを含む。人間のマージを待つ。"
