@@ -1,0 +1,28 @@
+name: Auto-merge
+
+# 全PRに自動マージを予約するだけ。マージしてよいかの判定はしない。
+# 判定はGitHub側のマージ要件（必須チェック＋CODEOWNERS）が行う。
+#
+# - 保護パス外のPR: CI green の時点でGitHubがマージする
+# - 保護パスを含むPR: コードオーナー承認が満たされないので予約されたまま待機し、
+#                     人間が管理者権限でマージする
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    name: 自動マージを予約する
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: gh pr merge --auto
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh pr merge "$PR" --auto --squash -R "$REPO"

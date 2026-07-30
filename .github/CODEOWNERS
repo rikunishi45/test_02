@@ -1,0 +1,13 @@
+# 人間のマージ承認が必要なパス（分類定義の正本）。
+#
+# ルールセット main-review が require_code_owner_review: true かつ
+# required_approving_review_count: 0 なので、承認要求がパス単位で効く。
+# ここに列挙したパスに触れたPRだけが自動マージされず、人間を待つ。
+#
+# CLAUDE.md の「保護パス」表と対応させること。片方だけ変えると穴が開く。
+
+# ガードレール自体。ここを自動マージ可にすると、AIが自分の制約を緩める
+# 変更を無人でマージできてしまう。
+/.github/    @rikunishi45
+/.claude/    @rikunishi45
+/CLAUDE.md   @rikunishi45
