@@ -14,6 +14,10 @@ concurrency:
 
 jobs:
   secret-scan:
+    # この name はルールセット main-ci の required_status_checks に
+    # context として文字列で登録してある。変えるとチェックが永久に
+    # 報告されなくなり、全PRがマージ不能で固まる。
+    # 変えるときは .github/rulesets/main-ci.json とGitHub側の両方を同時に直す。
     name: 秘密情報スキャン
     runs-on: ubuntu-latest
     steps:
