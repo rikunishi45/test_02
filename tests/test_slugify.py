@@ -17,6 +17,22 @@ def test_英数字が無ければ空文字を返す():
     assert slugify("!!!") == ""
 
 
+def test_アクセントを基底文字に落とす():
+    assert slugify("Café") == "cafe"
+
+
+def test_ウムラウトを基底文字に落とす():
+    assert slugify("Münster Straße") == "munster-stra-e"
+
+
+def test_非ラテン文字は表現できないので落ちる():
+    assert slugify("日本語") == ""
+
+
+def test_アクセントを落とした後にmax_lengthを適用する():
+    assert slugify("Café Münster", max_length=4) == "cafe"
+
+
 def test_max_length未指定なら切らない():
     assert slugify("hello world foo") == "hello-world-foo"
 
