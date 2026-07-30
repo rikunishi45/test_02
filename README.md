@@ -34,6 +34,28 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 
 ## GitHub側の設定
 
-- ルールセット `main-ci` — 必須チェック、ブランチ削除禁止、非早送り禁止
-- ルールセット `main-review` — コードオーナー承認（管理者は `bypass_mode: pull_request`）
-- リポジトリ設定 — auto-merge有効、squashマージのみ、マージ後ブランチ削除
+| 設定 | 内容 | bypass |
+|---|---|---|
+| ルールセット `main-ci` | 必須チェック（秘密情報スキャン）、ブランチ削除禁止、非早送り禁止 | なし。管理者もCIを飛ばせない |
+| ルールセット `main-review` | コードオーナー承認（承認数0＋パス単位） | 管理者のみ `pull_request` |
+| リポジトリ設定 | auto-merge有効、squashマージのみ、マージ後ブランチ削除 | — |
+
+ルールセットを2本に分けているのは、bypass がルールセット単位でしか設定できないため。
+1本に統合すると、管理者bypassがCIにも効いてしまい、green を待たずにマージできる状態になる。
+
+`main-review` の `pull_request` ルールは main への直接pushも止める。`bypass_mode` が
+`pull_request` なので、管理者のbypassはPR経由のマージにのみ効き、直接pushには効かない。
+
+### 再構築する場合
+
+```bash
+gh api -X PATCH repos/rikunishi45/test_02 \
+  -F allow_auto_merge=true -F allow_squash_merge=true \
+  -F allow_merge_commit=false -F allow_rebase_merge=false \
+  -F delete_branch_on_merge=true
+
+gh api -X POST repos/rikunishi45/test_02/rulesets --input .github/rulesets/main-ci.json
+gh api -X POST repos/rikunishi45/test_02/rulesets --input .github/rulesets/main-review.json
+```
+
+`gh api` はAIの `deny` 対象。ガードレールを迂回する経路のため、人間が実行する。
