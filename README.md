@@ -34,9 +34,12 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 |---|---|
 | `CLAUDE.md` | プロジェクト概要・開発フロー・保護パス・委任基準 |
 | `.claude/settings.json` | モデル割り当て（Opus/Sonnet）と権限（allow/deny） |
-| `.github/CODEOWNERS` | 人間のマージ承認が必要なパス |
-| `.github/workflows/automerge.yml` | 全PRに自動マージを予約する |
+| `.github/CODEOWNERS` | レビュー要求の宛先（壁ではない） |
+| `.github/workflows/automerge.yml` | 保護パスを判定し、含まないPRにのみ自動マージを予約する |
 | `.github/workflows/ci.yml` | 秘密情報スキャン |
+
+保護パスの定義は3か所に写っている。**片方だけ変えると穴が開く。**
+①`CLAUDE.md` の表、②`automerge.yml` の grep パターン、③`.github/CODEOWNERS`。
 
 ## GitHub側の設定
 
