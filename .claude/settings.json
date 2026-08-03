@@ -23,6 +23,7 @@
       "Bash(git log *)",
       "Bash(git show *)",
       "Bash(git branch *)",
+      "Bash(git rev-parse *)",
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git switch *)",
@@ -43,7 +44,12 @@
       "Bash(gh issue *)",
 
       "Bash(codex exec review)",
-      "Bash(codex exec review *)"
+      "Bash(codex exec review *)",
+
+      "Bash(jq *)",
+      "Bash(.claude/skills/dev-status/gather.sh)",
+      "Bash(.claude/skills/dev-status/gather.sh *)",
+      "Bash(.claude/skills/dev-status/log_review.sh *)"
     ],
     "deny": [
       "Bash(codex login)",

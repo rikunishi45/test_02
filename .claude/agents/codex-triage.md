@@ -39,3 +39,16 @@ Bash の実行はこのリポジトリの `.claude/settings.json` で `codex exe
 
 生の `.codex-review.md` の全文は転記しない。呼び出し元がどうしても原文を見たい場合は、
 ファイルパスだけ伝える。
+
+## ログ記録
+
+分類が終わったら、件数を `codex-review-log.jsonl` に1行追記する。`dev-status` skill が
+使う観測ログで、**検証・強制の道具ではない**（書いているのが自分自身である以上、
+「レビューが実際に行われた証明」にはならない。あくまで人間が後から状況を把握するための
+参考情報）。
+
+```bash
+.claude/skills/dev-status/log_review.sh <scope> <本物の修正の件数> <nitpickの件数> <誤検知の件数>
+```
+
+`<scope>` は実行時に指定されたスコープをそのまま書く（`uncommitted` または `base:main` 等）。
