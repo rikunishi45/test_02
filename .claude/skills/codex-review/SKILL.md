@@ -1,7 +1,7 @@
 ---
 name: codex-review
 description: 書いたコードを別モデル（Codex）にレビューさせる。push や PR 作成の前に実行する。「レビューして」「codex に見せて」「push する前に確認」などで発動する。
-allowed-tools: Bash(codex exec review *), Bash(git status *), Bash(git log *), Bash(git diff *), Read
+allowed-tools: Bash(git status *), Bash(git log *), Bash(git diff *)
 ---
 
 # codex-review — 別モデルによるレビュー
@@ -30,39 +30,31 @@ codex はレビューのために作業ツリーを広く読むので、`.env` �
 
 ## 実行
 
-PR 単位（main との差分）:
+**`codex exec review` を自分で実行しない。`codex-triage` サブエージェントに委任する。**
+Codex の生の出力（数十〜百行のテキスト）でメインの文脈を汚さないため。
 
-```bash
-codex exec review --base main -o .codex-review.md
-```
+`git status` / `git diff` でスコープを判断してから、Agent tool で `codex-triage` を呼ぶ。
 
-コミット前の作業ツリー:
+- コミット済みの差分（PR単位）→「main との差分を codex-triage でレビューして」
+- 作業ツリー（コミット前）→「未コミットの変更を codex-triage でレビューして」
 
-```bash
-codex exec review --uncommitted -o .codex-review.md
-```
+レビューには1〜数分かかる。バックグラウンドで走らせ、完了通知を待つ間に他の作業を
+進めてよい。
 
-`.codex-review.md` を Read で読む。**標準出力は進捗ログなので追わない。**
-`.codex-review.md` は `.gitignore` 済み。コミットしない。
+`codex-triage` が返す分類済みの要約だけを受け取る。**生の `.codex-review.md` を自分で
+読みにいかない。** それを読んでしまうと、この skill が防ごうとしている「メインの文脈が
+Codex の生出力で汚れる」ことがそのまま起きる。
 
-レビューには1〜数分かかる。`run_in_background: true` で走らせ、完了通知を待つ間に
-他の作業を進めてよい。
+## 指摘への対応
 
-## 指摘の分類
-
-**Codex の指摘をそのまま実装しない。** 3つに分ける。
+分類は `codex-triage` が行う（`AGENTS.md` を基準に）。ここでは受け取った結果への
+対応方針だけ書く。**分類済みの指摘をそのまま実装しない。**
 
 | 分類 | 対応 |
 |---|---|
 | 本物の修正 | 直す |
 | 妥当な nitpick | 安ければ直す。高くつくなら理由を書いて残す |
 | 誤検知・古い前提 | **直さない。** 理由を1行書いて飛ばす |
-
-誤検知に入るもの：
-
-- `AGENTS.md` の「指摘しないこと」に該当する指摘（フォーマット、命名の好み、CIが既に見ている範囲、抽象化の不足）
-- このリポジトリの設計意図を知らずに出す一般論。保護パス、fail closed のCI、最小構成の方針は Codex からは見えない
-- 既に別の層で担保されているもの（秘密情報のパターンマッチは gitleaks が見ている）
 
 ## 終わり方
 
