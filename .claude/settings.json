@@ -40,9 +40,23 @@
       "Bash(gh pr edit *)",
       "Bash(gh run list *)",
       "Bash(gh run view *)",
-      "Bash(gh issue *)"
+      "Bash(gh issue *)",
+
+      "Bash(codex exec review)",
+      "Bash(codex exec review *)"
     ],
     "deny": [
+      "Bash(codex login)",
+      "Bash(codex login *)",
+      "Bash(codex logout)",
+      "Bash(codex logout *)",
+      "Bash(codex * --dangerously-bypass-approvals-and-sandbox)",
+      "Bash(codex * --dangerously-bypass-approvals-and-sandbox *)",
+      "Bash(codex * --dangerously-bypass-hook-trust)",
+      "Bash(codex * --dangerously-bypass-hook-trust *)",
+      "Bash(codex * danger-full-access)",
+      "Bash(codex * danger-full-access *)",
+
       "Bash(gh pr merge)",
       "Bash(gh pr merge *)",
       "Bash(gh pr review)",
