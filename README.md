@@ -20,7 +20,7 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
     自動マージ                                    人間がマージするまで待機
 ```
 
-**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`、`setup-github.sh`、`run-tests.sh`
+**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`、`AGENTS.md`、`setup-github.sh`、`run-tests.sh`
 
 判定しているのは `automerge.yml`。保護パスを含むPRには自動マージを予約しない。AIは
 `gh pr merge` を持たないため、予約されなければマージ経路が存在しない。
@@ -33,6 +33,7 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 | ファイル | 役割 |
 |---|---|
 | `CLAUDE.md` | プロジェクト概要・開発フロー・保護パス・委任基準 |
+| `AGENTS.md` | レビューの判定基準。Codex が直接、Claude Code は `CLAUDE.md` の import 経由で読む |
 | `.claude/settings.json` | モデル割り当て（Opus/Sonnet）と権限（allow/deny） |
 | `.github/CODEOWNERS` | レビュー要求の宛先（壁ではない） |
 | `.github/workflows/automerge.yml` | 保護パスを判定し、含まないPRにのみ自動マージを予約する |
@@ -40,8 +41,10 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 | `setup-github.sh` | GitHub側の設定を投入・同期する。人間が実行する |
 | `run-tests.sh` | `src/` に対する壁の定義。`src/` を作るときに追加する |
 
-保護パスの定義は3か所に写っている。**片方だけ変えると穴が開く。**
-①`CLAUDE.md` の表、②`automerge.yml` の grep パターン、③`.github/CODEOWNERS`。
+保護パスの定義は4か所に写っている。**1か所だけ変えると穴が開く。**
+①`CLAUDE.md` の表、②`automerge.yml` の grep パターン、③`.github/CODEOWNERS`、
+④このファイルの上の一覧。壁として効くのは②だけで、他は説明。だが説明がずれると、
+次に触るときに②を間違える。
 
 ## `src/` に対する壁
 

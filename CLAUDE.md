@@ -1,5 +1,7 @@
 # test_02 — CLAUDE.md
 
+@AGENTS.md
+
 ## プロジェクト概要
 
 **目的：** 個人開発でAIを自走させるための最小構成の開発環境。安全性は人間の都度承認ではなく、GitHub側の機械的な壁で担保する。
@@ -81,6 +83,7 @@ pytest tests/ --cov=src --cov-fail-under=80
 | `/.github/` | CIと自動マージの仕組みそのもの |
 | `/.claude/` | エージェントの権限設定そのもの |
 | `/CLAUDE.md` | このファイル |
+| `/AGENTS.md` | レビューの判定基準。AIが自分の採点基準を緩められると、別モデルのレビューが壁として機能しなくなる |
 | `/setup-github.sh` | 人間が手で実行するブートストラップ |
 | `/run-tests.sh` | `src/` に対する壁の定義 |
 
@@ -90,7 +93,7 @@ pytest tests/ --cov=src --cov-fail-under=80
 
 `.github/CODEOWNERS` は壁ではない。PRの作成者が唯一のコードオーナーの場合、GitHubは本人にレビューを要求しないため、`require_code_owner_review` は実質的に無効化される（PR #2 で実測）。レビュー要求の宛先としてのみ残してある。
 
-定義は3か所に写っている。**片方だけ変えると穴が開く。** ①この表、②`automerge.yml` の grep パターン、③`.github/CODEOWNERS`。
+定義は4か所に写っている。**1か所だけ変えると穴が開く。** ①この表、②`automerge.yml` の grep パターン、③`.github/CODEOWNERS`、④`README.md`。実際に壁として効くのは②だけで、他は説明。だが説明がずれると、次に触るときに②を間違える。
 
 ---
 
