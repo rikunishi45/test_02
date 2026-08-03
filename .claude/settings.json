@@ -6,6 +6,10 @@
   "permissions": {
     "defaultMode": "acceptEdits",
     "allow": [
+      "Bash(pytest *)",
+      "Bash(python3 -m pytest *)",
+      "Bash(./run-tests.sh)",
+
       "Bash(ls *)",
       "Bash(find *)",
       "Bash(grep *)",
