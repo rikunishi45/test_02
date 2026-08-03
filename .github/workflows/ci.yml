@@ -21,6 +21,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        # 版を固定する。ランナー既定のNodeバージョンに依存すると、GitHub側の
+        # 更新で予告なくバージョンが変わり、ローカルで通ったCIが外部要因で
+        # 赤くなり得る（run-tests.sh のpip/npm版固定と同じ理由）。
+        with:
+          node-version: "26"
       - name: テストを実行する
         # fail closed。src/ に人間のレビューは入らないため、テストがCIの唯一の壁になる。
         # 壁の定義（run-tests.sh）は保護パスに置いてある。ここをAIが自由に書けると
