@@ -12,13 +12,15 @@
 
 ## 技術スタック
 
-実コードは未着手。決めた時点でここに記入する。
-
 | レイヤー | 技術 |
 |---|---|
-| 言語 | 未定 |
-| テストランナー | 未定 |
+| 言語 | TypeScript |
+| テストランナー | Vitest（`vitest.config.ts` で閾値を固定） |
+| ミューテーションテスト | Stryker（`stryker.config.mjs` で閾値を固定） |
 | CI | GitHub Actions |
+
+技術固有の規約は `.claude/rules/typescript.md`（`paths:` 付きで `*.ts`/`*.tsx` を
+編集する時だけ読み込まれる）。ここ（グローバル）と `AGENTS.md` は技術非依存のまま保つ。
 
 ---
 
@@ -34,20 +36,38 @@ CIの `テスト` ジョブは fail closed で動く：
 | `run-tests.sh` が無く `src/` も無い | 通る（現在の状態） |
 | `run-tests.sh` が無いのに `src/` がある | **失敗する** |
 
-つまり **`src/` に最初にコードを書くPRには `run-tests.sh` を同梱する**。実行権限（`chmod +x`）を忘れるとCIが落ちる。
+実行権限（`chmod +x`）を忘れるとCIが落ちる。現在の中身：
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-pip install -q pytest==8.3.4 pytest-cov==6.0.0   # 版を固定する。外部要因で赤くならないため
-pytest tests/ --cov=src --cov-fail-under=80
+npm ci --ignore-scripts
+npx tsc --noEmit
+npx vitest run --coverage
+npx stryker run
 ```
 
-`run-tests.sh` は保護パス。**ここで決めた下限（カバレッジ閾値など）はAIが下げられない。**
-テスト本体（`tests/`）は保護しないので自由に追加・修正してよい。
+型チェック → 単体テスト（カバレッジ） → ミューテーションテストの3段。
 
-**この壁が防ぐのは「テストが1本も走らずにマージされる」ことだけ。** 実装に合わせた
-甘いテストを書いて通すことは防げない（`tests/` を保護しない以上、構造的に残る）。
+`run-tests.sh` は保護パス。実行順序はAIが変えられない。しきい値自体は
+`vitest.config.ts` / `stryker.config.mjs`（どちらも保護パス）にある。**Strykerの
+`thresholds` はCLIから上書きできず設定ファイルにしか書けない**ため、この2ファイルを
+保護しないとカバレッジ・ミューテーションスコアの下限をAIが下げられてしまう。
+`run-tests.sh` は `npm test` のような `package.json` 経由の間接呼び出しを使わず、
+`npx` で直接コマンドを呼ぶ。それでも `package.json` / `package-lock.json` は
+`run-tests.sh` が呼ぶツール（Vitest/Stryker）そのもののバージョンを決めるので、
+**この2ファイルも保護パスにしてある**（非保護のままだと、しきい値ファイルを一切
+変えずにツールのバージョンを差し替えて壁を弱められる。push前レビューで実際に
+Codexに指摘された）。`--ignore-scripts` は依存パッケージの `postinstall` 等による
+任意コード実行を塞ぐ。テスト本体（`src/**/*.test.ts`）は保護しないので自由に
+追加・修正してよい。
+
+**以前はここで「実装に合わせた甘いテストを書いて通すことを防げない」と書いていたが、
+ミューテーションテストの導入でこの穴は部分的に塞がった。** 実装に小さな変異を注入し、
+テストがそれを検知（テストが落ちる）するかを機械的に確認する——テストが実装の分岐を
+なぞっているだけで、実際には何も検証していない場合、ミューテーションスコアが下がり
+CIが落ちる。ただし万能ではない：同値ミュータント（観測可能な違いを生まない変異）は
+原理的にどんなテストでも検知できない。詳細は `.claude/rules/typescript.md`。
 
 ---
 
@@ -100,6 +120,11 @@ pytest tests/ --cov=src --cov-fail-under=80
 | `/AGENTS.md` | レビューの判定基準。AIが自分の採点基準を緩められると、別モデルのレビューが壁として機能しなくなる |
 | `/setup-github.sh` | 人間が手で実行するブートストラップ |
 | `/run-tests.sh` | `src/` に対する壁の定義 |
+| `/vitest.config.ts` | カバレッジ閾値の定義。ここが下げられると壁が弱くなる |
+| `/stryker.config.mjs` | ミューテーションスコアの閾値の定義。CLIから上書きできない仕様のため、ここを保護しないと閾値をAIが下げられる |
+| `/package.json` | `run-tests.sh` が `npx` で直接呼ぶツール（Vitest/Stryker）のバージョンをここが決める。非保護のままだと、しきい値ファイルを一切変えずにツールのバージョンや依存を差し替えて壁を弱められる（Codexレビューで実際に指摘された） |
+| `/package-lock.json` | 同上。`npm ci` が実際にインストールする内容を固定する |
+| `/tsconfig.json` | `npx tsc --noEmit`（`run-tests.sh` 内）の挙動を決める。`strict` を外す、`include` を狭める等で型チェックの壁を弱められる（Codexレビューで指摘） |
 
 ここを自動マージ可にすると、**AIが自分の制約を緩める変更を無人でマージできる。** 一度それが起きると他のすべての対策が同時に無効になる。単一障害点なので例外を作らない。
 

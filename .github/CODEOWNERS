@@ -25,3 +25,19 @@
 # src/ に対する壁の定義。AIがここを書き換えられると、中身を exit 0 に
 # して壁を無効化できる。テスト本体（tests/）は保護しない。
 /run-tests.sh      @rikunishi45
+
+# カバレッジ・ミューテーションスコアの閾値の定義。Strykerのthresholdsは
+# CLIから上書きできず設定ファイルにしか書けないため、ここを保護しないと
+# run-tests.sh を保護している意味がなくなる。
+/vitest.config.ts    @rikunishi45
+/stryker.config.mjs  @rikunishi45
+
+# run-tests.sh が npx で直接呼ぶツール（Vitest/Stryker）のバージョンを決める。
+# 非保護のままだと、しきい値ファイルを変えずにツールのバージョンを差し替えて
+# 壁を弱められる（push前レビューでCodexに実際に指摘された）。
+/package.json        @rikunishi45
+/package-lock.json   @rikunishi45
+
+# npx tsc --noEmit（run-tests.sh 内）の挙動を決める。strictを外す等で
+# 型チェックの壁を弱められる（push前レビューでCodexに指摘された）。
+/tsconfig.json       @rikunishi45

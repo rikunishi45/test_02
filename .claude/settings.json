@@ -49,7 +49,16 @@
       "Bash(jq *)",
       "Bash(.claude/skills/dev-status/gather.sh)",
       "Bash(.claude/skills/dev-status/gather.sh *)",
-      "Bash(.claude/skills/dev-status/log_review.sh *)"
+      "Bash(.claude/skills/dev-status/log_review.sh *)",
+
+      "Bash(npm ci)",
+      "Bash(npm ci *)",
+      "Bash(npm install)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(npx vitest *)",
+      "Bash(npx stryker *)",
+      "Bash(./run-tests.sh)"
     ],
     "deny": [
       "Bash(codex login)",

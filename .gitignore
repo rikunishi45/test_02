@@ -1,3 +1,8 @@
 .DS_Store
 .claude/settings.local.json
 .codex-review.md
+node_modules/
+dist/
+coverage/
+.stryker-tmp/
+reports/
