@@ -48,6 +48,7 @@
     "deny": [
       "Bash(codex login)",
       "Bash(codex login *)",
+      "Bash(codex logout)",
       "Bash(codex logout *)",
       "Bash(codex * --dangerously-bypass-approvals-and-sandbox)",
       "Bash(codex * --dangerously-bypass-approvals-and-sandbox *)",
