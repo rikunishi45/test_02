@@ -14,6 +14,10 @@
 /.claude/          @rikunishi45
 /CLAUDE.md         @rikunishi45
 
+# レビューの判定基準。AIがここを書き換えられると、別モデルのレビューを
+# 自分に都合よく採点させられる。
+/AGENTS.md         @rikunishi45
+
 # 人間が手で実行するブートストラップ。AIが書き換えられると、
 # 人間の手で任意の gh api が走る。
 /setup-github.sh   @rikunishi45
