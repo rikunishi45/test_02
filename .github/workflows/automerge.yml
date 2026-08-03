@@ -47,7 +47,7 @@ jobs:
           # ベースが進んでも、そのPRが触っていないファイルは混入しない。
           gh pr diff "$PR" -R "$REPO" --name-only > changed.txt
           echo "変更ファイル:"; cat changed.txt
-          if grep -qE '^(\.github/|\.claude/|CLAUDE\.md$|AGENTS\.md$|setup-github\.sh$|run-tests\.sh$)' changed.txt; then
+          if grep -qE '^(\.github/|\.claude/|CLAUDE\.md$|AGENTS\.md$|setup-github\.sh$|run-tests\.sh$|vitest\.config\.ts$|stryker\.config\.mjs$|package\.json$|package-lock\.json$|tsconfig\.json$)' changed.txt; then
             echo "protected=true" >> "$GITHUB_OUTPUT"
           else
             echo "protected=false" >> "$GITHUB_OUTPUT"

@@ -20,7 +20,7 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
     自動マージ                                    人間がマージするまで待機
 ```
 
-**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`、`AGENTS.md`、`setup-github.sh`、`run-tests.sh`
+**保護パス:** `.github/`、`.claude/`、`CLAUDE.md`、`AGENTS.md`、`setup-github.sh`、`run-tests.sh`、`vitest.config.ts`、`stryker.config.mjs`、`package.json`、`package-lock.json`、`tsconfig.json`
 
 判定しているのは `automerge.yml`。保護パスを含むPRには自動マージを予約しない。AIは
 `gh pr merge` を持たないため、予約されなければマージ経路が存在しない。
@@ -39,7 +39,11 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 | `.github/workflows/automerge.yml` | 保護パスを判定し、含まないPRにのみ自動マージを予約する |
 | `.github/workflows/ci.yml` | テスト（`run-tests.sh`）と秘密情報スキャン |
 | `setup-github.sh` | GitHub側の設定を投入・同期する。人間が実行する |
-| `run-tests.sh` | `src/` に対する壁の定義。`src/` を作るときに追加する |
+| `run-tests.sh` | `src/` に対する壁の定義。TypeScript/Vitest/Strykerの実行順序を定義する |
+| `vitest.config.ts` | カバレッジ閾値の定義 |
+| `stryker.config.mjs` | ミューテーションスコア閾値の定義。CLIから上書きできない仕様のため保護パス |
+| `package.json` / `package-lock.json` | `run-tests.sh` が呼ぶツールのバージョンを決める。非保護だと閾値ファイルを介さずに壁を弱められる |
+| `tsconfig.json` | `npx tsc --noEmit` の挙動を決める。`strict` を外す等で型チェックの壁を弱められる |
 
 保護パスの定義は4か所に写っている。**1か所だけ変えると穴が開く。**
 ①`CLAUDE.md` の表、②`automerge.yml` の grep パターン、③`.github/CODEOWNERS`、
@@ -63,9 +67,11 @@ feature ブランチで実装 → push → PR作成        （すべて承認不
 代わりに CI の `テスト` ジョブが fail closed で壁になる。詳細は `CLAUDE.md` の
 「テストの壁」を参照。
 
-`run-tests.sh` を保護パスにしてあるので、そこに書いた下限（カバレッジ閾値など）はAIが
-下げられない。**ただし防げるのは「テストが1本も走らずにマージされる」ことだけで、実装に
-合わせた甘いテストを書いて通すことは防げない。** `tests/` を保護しない以上、構造的に残る。
+`run-tests.sh` / `vitest.config.ts` / `stryker.config.mjs` を保護パスにしてあるので、
+実行順序と閾値はAIが下げられない。単体テストのカバレッジに加え、Stryker による
+ミューテーションテスト（実装に小さな変異を注入し、テストが検知するかを機械的に確認する）
+を組み込んだことで、「実装に合わせた甘いテストを書いて通す」問題に部分的に対処している。
+詳細は `CLAUDE.md` の「テストの壁」を参照。
 
 ## GitHub側の設定
 
