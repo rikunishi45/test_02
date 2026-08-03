@@ -66,11 +66,12 @@ pytest tests/ --cov=src --cov-fail-under=80
 
 1. `main` から作業ブランチを切る（`feature/<短い説明>`）。
 2. 実装する。**`src/` を変更するPRには対応するテストを必ず含める。** `src/` に人間のレビューは入らず、CIが唯一の壁になるため。
-3. `git push` して `gh pr create` する。
-4. `automerge.yml` が自動マージを予約し、あとはGitHubが判定する。
+3. **push の前に `/codex-review` を実行する。** 別モデル（Codex）に差分を読ませる。同じモデルは自分の判断を追認するので、実装に合わせた甘いテストを自分では見つけられない。指摘は分類してから対応する（`.claude/skills/codex-review/SKILL.md`）。
+4. `git push` して `gh pr create` する。
+5. `automerge.yml` が自動マージを予約し、あとはGitHubが判定する。
    - 保護パス外 かつ CI green → 自動マージ
    - 保護パスを含む → 人間がマージするまで待機
-5. **AIはPRをマージしない。** `gh pr merge` は `deny`。
+6. **AIはPRをマージしない。** `gh pr merge` は `deny`。
 
 **中間コミットでPRを作らない。** ブランチ上では自由にコミットし、タスクが完結した時点でPRを1本作る。逆に、タスクが別ならサイズが小さくてもPRを分ける — 自動マージされるPRのレビューコストはゼロで、混在させると保護パス1つで全体が止まる。
 
@@ -105,6 +106,8 @@ pytest tests/ --cov=src --cov-fail-under=80
 - `gh api` / `gh repo edit` / `gh ruleset` / `curl` / `wget` — 上のガードレールを迂回する経路
 - force push、`git reset --hard`、`git commit --amend`、`main` への直接push
 - `.env` と秘密鍵の読み取り
+- `codex login` / `logout` — 認証先をサブスクからAPIキー（従量課金）に差し替えられる経路
+- `codex` のサンドボックス回避（`--dangerously-bypass-*`、`danger-full-access`）
 
 `deny` は全権限モードでも有効な唯一の層。禁止事項は必ず `deny` 側に書く（`allow` は緩めるための道具で、`bypassPermissions` では無効化される）。
 
