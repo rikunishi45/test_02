@@ -12,13 +12,17 @@
 
 ## 技術スタック
 
-実コードは未着手。決めた時点でここに記入する。
+**暫定。** Codex 利用量の検証（`truncate_words`）のために Python 3 / pytest を仮に入れてある。
+PR #7〜#9 と同じパターンで、検証が終わったら削除して「未定」に戻す予定。恒久決定ではない。
 
 | レイヤー | 技術 |
 |---|---|
-| 言語 | 未定 |
-| テストランナー | 未定 |
+| 言語 | Python 3 |
+| テストランナー | pytest（`run-tests.sh` で版を固定） |
 | CI | GitHub Actions |
+
+`conftest.py` をルートに置いてある。これがあると pytest がリポジトリルートを `sys.path` に
+入れるので、`tests/` 側で `sys.path` を操作せずに `from src.xxx import ...` が解決する。
 
 ---
 
