@@ -1,16 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyDescription,
-  rememberCategory,
   UNCATEGORIZED,
   type CategoryRule,
   type LearnedCategories,
 } from "./classify.js";
-
-/** lib 設定に依存しないよう hasOwn は自前で呼ぶ */
-function hasOwn(target: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(target, key);
-}
 
 /**
  * `{ __proto__: "…" }` のリテラルはプロトタイプ設定になり自分自身のキーにならない。
@@ -288,12 +282,18 @@ describe("classifyDescription", () => {
       expect(classifyDescription("", rules, learned)).toBe("手入力");
     });
 
-    it("空白1文字の pattern は空文字列ではないので、マッチしうる", () => {
-      const rules = frozenRules([ruleOf(" ", "空白")]);
-      expect(classifyDescription("セブン 渋谷店", rules, NO_LEARNED)).toBe("空白");
-      expect(classifyDescription("セブン渋谷店", rules, NO_LEARNED)).toBe(
-        UNCATEGORIZED,
-      );
+    it.each([
+      ["半角空白", " "],
+      ["全角空白 U+3000", "　"],
+      ["タブ", "\t"],
+      ["空白の連続", "   "],
+    ])("空白だけの pattern (%s) はマッチしない", (_name, pattern) => {
+      const rules = frozenRules([ruleOf(pattern, "空白")]);
+      // 空パターンを弾く理由がそのまま当てはまる。実データの摘要は
+      // `楽天ＳＰ　楽天ペイ…` のように区切りを持ち、正規化後は必ず空白を含む。
+      // 空白1本のルールが紛れ込むと全件がそのカテゴリになる。
+      expect(classifyDescription("セブン 渋谷店", rules, NO_LEARNED)).toBe(UNCATEGORIZED);
+      expect(classifyDescription("セブン渋谷店", rules, NO_LEARNED)).toBe(UNCATEGORIZED);
     });
   });
 
@@ -499,294 +499,4 @@ describe("classifyDescription", () => {
       expect(classifyDescription("セブンイレブン", rules, learned)).toBe("食費");
     });
   });
-});
-
-describe("rememberCategory", () => {
-  describe("追加・上書き・保持", () => {
-    it("空の learned に追加できる", () => {
-      const result = rememberCategory(NO_LEARNED, "セブンイレブン渋谷店", "食費");
-      expect(entriesOf(result)).toEqual([["セブンイレブン渋谷店", "食費"]]);
-    });
-
-    it("既存のキーがある learned に、別のキーを追加できる", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      const result = rememberCategory(learned, "Amazon.co.jp", "書籍");
-      expect(entriesOf(result)).toEqual([
-        ["Amazon.co.jp", "書籍"],
-        ["ローソン", "コンビニ"],
-      ]);
-    });
-
-    it("同じキーに別のカテゴリを渡すと、上書きされる", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      const result = rememberCategory(learned, "ローソン", "食費");
-      expect(entriesOf(result)).toEqual([["ローソン", "食費"]]);
-    });
-
-    it("上書きしても、他のキーは保持される", () => {
-      const learned = Object.freeze(
-        learnedOf([
-          ["ローソン", "コンビニ"],
-          ["Amazon.co.jp", "書籍"],
-          ["JR東日本", "交通費"],
-        ]),
-      );
-      const result = rememberCategory(learned, "Amazon.co.jp", "買い物");
-      expect(entriesOf(result)).toEqual([
-        ["Amazon.co.jp", "買い物"],
-        ["JR東日本", "交通費"],
-        ["ローソン", "コンビニ"],
-      ]);
-    });
-
-    it("同じ値で上書きしても、内容は変わらない", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      const result = rememberCategory(learned, "ローソン", "コンビニ");
-      expect(entriesOf(result)).toEqual([["ローソン", "コンビニ"]]);
-    });
-
-    it("description が空文字列でも、キーとして追加できる", () => {
-      const result = rememberCategory(NO_LEARNED, "", "手入力");
-      expect(entriesOf(result)).toEqual([["", "手入力"]]);
-    });
-
-    it("category が空文字列でも、未分類ではないので追加される", () => {
-      const result = rememberCategory(NO_LEARNED, "ローソン", "");
-      expect(hasOwn(result, "ローソン")).toBe(true);
-      expect(entriesOf(result)).toEqual([["ローソン", ""]]);
-    });
-
-    for (const name of ["constructor", "toString", "__proto__"]) {
-      it(`"${name}" を description にしても、自分自身のキーとして追加される`, () => {
-        const result = rememberCategory(NO_LEARNED, name, "食費");
-        expect(hasOwn(result, name)).toBe(true);
-        expect(entriesOf(result)).toEqual([[name, "食費"]]);
-      });
-    }
-  });
-
-  describe("category が未分類のとき、キーを削除する", () => {
-    it("既存のキーを削除する", () => {
-      const learned = Object.freeze(
-        learnedOf([
-          ["ローソン", "コンビニ"],
-          ["Amazon.co.jp", "書籍"],
-        ]),
-      );
-      const result = rememberCategory(learned, "ローソン", UNCATEGORIZED);
-      expect(hasOwn(result, "ローソン")).toBe(false);
-      expect(entriesOf(result)).toEqual([["Amazon.co.jp", "書籍"]]);
-    });
-
-    it("削除しても、他のキーは保持される", () => {
-      const learned = Object.freeze(
-        learnedOf([
-          ["ローソン", "コンビニ"],
-          ["Amazon.co.jp", "書籍"],
-          ["JR東日本", "交通費"],
-        ]),
-      );
-      const result = rememberCategory(learned, "Amazon.co.jp", UNCATEGORIZED);
-      expect(entriesOf(result)).toEqual([
-        ["JR東日本", "交通費"],
-        ["ローソン", "コンビニ"],
-      ]);
-    });
-
-    it("唯一のキーを削除すると、空のオブジェクトになる", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      const result = rememberCategory(learned, "ローソン", UNCATEGORIZED);
-      expect(entriesOf(result)).toEqual([]);
-    });
-
-    it("削除は完全一致のキーだけを対象にする（部分一致するキーは残る）", () => {
-      const learned = Object.freeze(
-        learnedOf([
-          ["セブンイレブン", "食費"],
-          ["セブンイレブン渋谷店", "交際費"],
-        ]),
-      );
-      const result = rememberCategory(learned, "セブンイレブン", UNCATEGORIZED);
-      expect(entriesOf(result)).toEqual([["セブンイレブン渋谷店", "交際費"]]);
-    });
-
-    it("空文字列キーも削除できる", () => {
-      const learned = Object.freeze(
-        learnedOf([
-          ["", "手入力"],
-          ["ローソン", "コンビニ"],
-        ]),
-      );
-      const result = rememberCategory(learned, "", UNCATEGORIZED);
-      expect(entriesOf(result)).toEqual([["ローソン", "コンビニ"]]);
-    });
-
-    it('リテラルの "未分類" を渡しても、削除される（定数と同一）', () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      const result = rememberCategory(learned, "ローソン", "未分類");
-      expect(entriesOf(result)).toEqual([]);
-    });
-
-    it("未分類に1文字足しただけのカテゴリは、削除ではなく追加になる（境界の外）", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      const result = rememberCategory(learned, "ローソン", "未分類 ");
-      expect(entriesOf(result)).toEqual([["ローソン", "未分類 "]]);
-    });
-
-    it("未分類の部分文字列は、削除ではなく追加になる（境界の外）", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      const result = rememberCategory(learned, "ローソン", "未分");
-      expect(entriesOf(result)).toEqual([["ローソン", "未分"]]);
-    });
-  });
-
-  describe("削除対象のキーが元々無くても、例外にしない", () => {
-    it("空の learned から削除しても、例外にならず空のまま", () => {
-      let result: LearnedCategories = NO_LEARNED;
-      expect(() => {
-        result = rememberCategory(NO_LEARNED, "ローソン", UNCATEGORIZED);
-      }).not.toThrow();
-      expect(entriesOf(result)).toEqual([]);
-    });
-
-    it("別のキーだけを持つ learned から削除しても、内容が変わらない", () => {
-      const learned = Object.freeze(learnedOf([["Amazon.co.jp", "書籍"]]));
-      const result = rememberCategory(learned, "ローソン", UNCATEGORIZED);
-      expect(entriesOf(result)).toEqual([["Amazon.co.jp", "書籍"]]);
-    });
-
-    for (const name of ["constructor", "toString", "__proto__"]) {
-      it(`自分自身のキーでない "${name}" を削除しても、例外にならず内容が変わらない`, () => {
-        const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-        const result = rememberCategory(learned, name, UNCATEGORIZED);
-        expect(entriesOf(result)).toEqual([["ローソン", "コンビニ"]]);
-        expect(hasOwn(result, name)).toBe(false);
-      });
-    }
-  });
-
-  describe("引数を書き換えず、常に新しいオブジェクトを返す", () => {
-    it("追加のとき、戻り値は引数と別の参照", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      expect(rememberCategory(learned, "Amazon.co.jp", "書籍")).not.toBe(learned);
-    });
-
-    it("上書きのとき、戻り値は引数と別の参照", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      expect(rememberCategory(learned, "ローソン", "食費")).not.toBe(learned);
-    });
-
-    it("削除のとき、戻り値は引数と別の参照", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      expect(rememberCategory(learned, "ローソン", UNCATEGORIZED)).not.toBe(learned);
-    });
-
-    it("削除対象が無いときでも、戻り値は引数と別の参照", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      expect(rememberCategory(learned, "Amazon.co.jp", UNCATEGORIZED)).not.toBe(
-        learned,
-      );
-    });
-
-    it("追加しても、元の learned は変わらない", () => {
-      const learned = learnedOf([["ローソン", "コンビニ"]]);
-      const snapshot = entriesOf(learned);
-      rememberCategory(learned, "Amazon.co.jp", "書籍");
-      expect(entriesOf(learned)).toEqual(snapshot);
-    });
-
-    it("上書きしても、元の learned は変わらない", () => {
-      const learned = learnedOf([["ローソン", "コンビニ"]]);
-      rememberCategory(learned, "ローソン", "食費");
-      expect(entriesOf(learned)).toEqual([["ローソン", "コンビニ"]]);
-    });
-
-    it("削除しても、元の learned は変わらない", () => {
-      const learned = learnedOf([
-        ["ローソン", "コンビニ"],
-        ["Amazon.co.jp", "書籍"],
-      ]);
-      rememberCategory(learned, "ローソン", UNCATEGORIZED);
-      expect(entriesOf(learned)).toEqual([
-        ["Amazon.co.jp", "書籍"],
-        ["ローソン", "コンビニ"],
-      ]);
-    });
-
-    it("Object.freeze した learned に追加しても、例外にならない", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      expect(() =>
-        rememberCategory(learned, "Amazon.co.jp", "書籍"),
-      ).not.toThrow();
-    });
-
-    it("Object.freeze した learned のキーを上書きしても、例外にならない", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      expect(() => rememberCategory(learned, "ローソン", "食費")).not.toThrow();
-    });
-
-    it("Object.freeze した learned からキーを削除しても、例外にならない", () => {
-      const learned = Object.freeze(learnedOf([["ローソン", "コンビニ"]]));
-      expect(() =>
-        rememberCategory(learned, "ローソン", UNCATEGORIZED),
-      ).not.toThrow();
-    });
-
-    it("連続して呼んでも、途中の戻り値は後の呼び出しに影響されない", () => {
-      const first = rememberCategory(NO_LEARNED, "ローソン", "コンビニ");
-      const second = rememberCategory(first, "Amazon.co.jp", "書籍");
-      const third = rememberCategory(second, "ローソン", UNCATEGORIZED);
-
-      expect(entriesOf(first)).toEqual([["ローソン", "コンビニ"]]);
-      expect(entriesOf(second)).toEqual([
-        ["Amazon.co.jp", "書籍"],
-        ["ローソン", "コンビニ"],
-      ]);
-      expect(entriesOf(third)).toEqual([["Amazon.co.jp", "書籍"]]);
-    });
-  });
-});
-
-describe("rememberCategory と classifyDescription の組み合わせ", () => {
-  const rules = frozenRules([ruleOf("amazon", "買い物")]);
-
-  it("学習した description は、次の分類でルールより優先される", () => {
-    const learned = rememberCategory(NO_LEARNED, "Amazon.co.jp", "書籍");
-    expect(classifyDescription("Amazon.co.jp", rules, learned)).toBe("書籍");
-  });
-
-  it("学習を未分類で取り消すと、ルールの判定に戻る", () => {
-    const learned = rememberCategory(NO_LEARNED, "Amazon.co.jp", "書籍");
-    const cleared = rememberCategory(learned, "Amazon.co.jp", UNCATEGORIZED);
-    expect(classifyDescription("Amazon.co.jp", rules, cleared)).toBe("買い物");
-  });
-
-  it("ルールにも当たらない description の学習を取り消すと、未分類に戻る", () => {
-    const learned = rememberCategory(NO_LEARNED, "ローソン渋谷店", "コンビニ");
-    const cleared = rememberCategory(learned, "ローソン渋谷店", UNCATEGORIZED);
-    expect(classifyDescription("ローソン渋谷店", NO_RULES, cleared)).toBe(
-      UNCATEGORIZED,
-    );
-  });
-
-  it("学習は完全一致のキーにしか効かないので、類似の description はルール判定のまま", () => {
-    const learned = rememberCategory(NO_LEARNED, "Amazon.co.jp", "書籍");
-    expect(classifyDescription("Amazon.co.jp/order", rules, learned)).toBe("買い物");
-  });
-
-  for (const name of ["constructor", "toString", "__proto__"]) {
-    it(`"${name}" を学習すると、次の分類でそのカテゴリが返る`, () => {
-      const learned = rememberCategory(NO_LEARNED, name, "食費");
-      const result = classifyDescription(name, NO_RULES, learned);
-      expect(typeof result).toBe("string");
-      expect(result).toBe("食費");
-    });
-
-    it(`"${name}" を学習していないとき、分類は未分類のまま`, () => {
-      const learned = rememberCategory(NO_LEARNED, "ローソン", "コンビニ");
-      const result = classifyDescription(name, NO_RULES, learned);
-      expect(typeof result).toBe("string");
-      expect(result).toBe(UNCATEGORIZED);
-    });
-  }
 });

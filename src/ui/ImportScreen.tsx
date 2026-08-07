@@ -4,7 +4,8 @@ import { parseCsv } from "../csv/parse-csv.js";
 import { applyMapping, type RowError } from "../csv/column-mapping.js";
 import { classifyForImport, type ClassifiedTransaction } from "../import/classify-duplicates.js";
 import { isSelectedForImport } from "../import/selection.js";
-import { classifyDescription } from "../category/classify.js";
+import { classifyDescription, type LearnedCategories } from "../category/classify.js";
+import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { getAllColumnMappings, saveImport } from "../storage/db.js";
 import type { NamedColumnMapping, StoredTransaction } from "../storage/schema.js";
 import type { Transaction, TransactionSource } from "../domain/transaction.js";
@@ -26,10 +27,11 @@ const YEN = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY" 
 interface Props {
   db: IDBDatabase;
   existing: StoredTransaction[];
+  learned: LearnedCategories;
   onImported: () => void;
 }
 
-export function ImportScreen({ db, existing, onImported }: Props) {
+export function ImportScreen({ db, existing, learned, onImported }: Props) {
   const [fileName, setFileName] = useState("");
   const [rawCsv, setRawCsv] = useState("");
   const [rows, setRows] = useState<string[][]>([]);
@@ -98,8 +100,7 @@ export function ImportScreen({ db, existing, onImported }: Props) {
     const stored: StoredTransaction[] = chosen.map((entry) => ({
       ...entry.transaction,
       id: crypto.randomUUID(),
-      // ルールはまだ空。実データの摘要を見てから次のPRで作る。
-      category: classifyDescription(entry.transaction.description, [], {}),
+      category: classifyDescription(entry.transaction.description, DEFAULT_CATEGORY_RULES, learned),
     }));
 
     await saveImport(

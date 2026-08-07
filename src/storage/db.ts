@@ -1,4 +1,4 @@
-import type { LearnedCategories } from "../category/classify.js";
+import { UNCATEGORIZED, type LearnedCategories } from "../category/classify.js";
 import type { BackupData } from "./backup.js";
 import {
   DB_NAME,
@@ -37,8 +37,8 @@ function commit(transaction: IDBTransaction): Promise<void> {
  *
  * `put` は keyPath が欠けた値などで**同期的に**例外を投げる。その例外をそのまま
  * 外に出すと、既に積んだ `clear()` や先行する `put` を抱えたトランザクションが
- * 誰にも中断されずコミットされる。全消ししてから失敗する経路（replaceAll、
- * saveLearnedCategories）ではそれがデータ消失になる。明示的に中断する。
+ * 誰にも中断されずコミットされる。全消ししてから失敗する経路（replaceAll）では
+ * それがデータ消失になる。明示的に中断する。
  */
 async function writeAll(transaction: IDBTransaction, queueWrites: () => void): Promise<void> {
   try {
@@ -80,6 +80,25 @@ export function openDatabase(indexedDB: IDBFactory): Promise<IDBDatabase> {
 export function getAllTransactions(db: IDBDatabase): Promise<StoredTransaction[]> {
   const store = db.transaction(STORE_TRANSACTIONS, "readonly").objectStore(STORE_TRANSACTIONS);
   return toPromise(store.getAll() as IDBRequest<StoredTransaction[]>);
+}
+
+/**
+ * 既存の取引を上書きする。再分類の結果を書き戻すのに使う。
+ *
+ * 取り込みには使わない。取り込みは履歴とマッピングも一緒に書く必要があり、
+ * それを別トランザクションに分けると部分的に書かれた状態が残る（saveImport 参照）。
+ */
+export async function putTransactions(
+  db: IDBDatabase,
+  transactions: readonly StoredTransaction[],
+): Promise<void> {
+  const tx = db.transaction(STORE_TRANSACTIONS, "readwrite");
+  const store = tx.objectStore(STORE_TRANSACTIONS);
+  await writeAll(tx, () => {
+    for (const transaction of transactions) {
+      store.put(transaction);
+    }
+  });
 }
 
 /**
@@ -130,17 +149,28 @@ export async function getLearnedCategories(db: IDBDatabase): Promise<LearnedCate
   return Object.fromEntries(records.map((r) => [r.description, r.category]));
 }
 
-export async function saveLearnedCategories(
+/**
+ * 摘要1件のカテゴリを覚える。`UNCATEGORIZED` を渡すと忘れる。
+ *
+ * 取り消しの経路を残すのが要。一度覚えた分類を消せないと、間違って覚えさせた
+ * ものを直せなくなる。
+ *
+ * **マップ全体を受け取る形にしない。** 全体を受けると呼び出し側が
+ * 「読む → 直す → 書き戻す」をせざるを得ず、2件を続けて直したときに
+ * 1件目の修正が黙って消える（lost update）。ストアの keyPath が description
+ * なので、1件の更新は読み込み無しの put / delete で済み、競合の窓が無い。
+ */
+export async function setLearnedCategory(
   db: IDBDatabase,
-  learned: LearnedCategories,
+  description: string,
+  category: string,
 ): Promise<void> {
   const tx = db.transaction(STORE_LEARNED_CATEGORIES, "readwrite");
   const store = tx.objectStore(STORE_LEARNED_CATEGORIES);
   await writeAll(tx, () => {
-    // 差分ではなく総入れ替えにする。分類の取り消し（キーの削除）を
-    // 差分で表現するには「消えたキー」を別途持つ必要があり、状態が二重になる。
-    store.clear();
-    for (const [description, category] of Object.entries(learned)) {
+    if (category === UNCATEGORIZED) {
+      store.delete(description);
+    } else {
       store.put({ description, category });
     }
   });
