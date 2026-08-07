@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { getAllTransactions } from "../storage/db.js";
+import { getAllTransactions, getLearnedCategories, putTransactions, setLearnedCategory } from "../storage/db.js";
+import type { LearnedCategories } from "../category/classify.js";
+import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
+import { reclassifyTransactions } from "../category/reclassify.js";
 import type { StoredTransaction } from "../storage/schema.js";
 import { useDatabase } from "./useDatabase.js";
 import { ImportScreen } from "./ImportScreen.js";
@@ -12,15 +15,44 @@ export function App() {
   const database = useDatabase();
   const [tab, setTab] = useState<Tab>("list");
   const [transactions, setTransactions] = useState<StoredTransaction[]>([]);
+  const [learned, setLearned] = useState<LearnedCategories>({});
 
   const db = database.status === "ready" ? database.db : null;
 
+  // 読み込みのたびに分類し直す。ルールは後から増えるので、取り込み時に決めた
+  // カテゴリを固定すると過去の取引が未分類のまま取り残される。
+  // reclassify は冪等なので、書き戻した後にもう一度走らせても変化ゼロで止まる。
   const reload = useCallback(async () => {
     if (db === null) {
       return;
     }
+    const [rows, learnedNow] = await Promise.all([
+      getAllTransactions(db),
+      getLearnedCategories(db),
+    ]);
+    setLearned(learnedNow);
+
+    const changed = reclassifyTransactions(rows, DEFAULT_CATEGORY_RULES, learnedNow);
+    if (changed.length === 0) {
+      setTransactions(rows);
+      return;
+    }
+    await putTransactions(db, changed);
     setTransactions(await getAllTransactions(db));
   }, [db]);
+
+  // learned をここで読まない。画面が持っている古いマップを基に書き戻すと、
+  // 2件を続けて直したときに1件目が消える。単一キーの更新に任せる。
+  const changeCategory = useCallback(
+    async (description: string, category: string) => {
+      if (db === null) {
+        return;
+      }
+      await setLearnedCategory(db, description, category);
+      await reload();
+    },
+    [db, reload],
+  );
 
   useEffect(() => {
     void reload();
@@ -55,9 +87,17 @@ export function App() {
       </nav>
 
       {tab === "list" ? (
-        <TransactionList transactions={transactions} />
+        <TransactionList
+          transactions={transactions}
+          onCategoryChange={(description, category) => void changeCategory(description, category)}
+        />
       ) : (
-        <ImportScreen db={database.db} existing={transactions} onImported={reload} />
+        <ImportScreen
+          db={database.db}
+          existing={transactions}
+          learned={learned}
+          onImported={reload}
+        />
       )}
 
       <BackupPanel db={database.db} onRestored={reload} />

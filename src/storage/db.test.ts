@@ -7,12 +7,18 @@ import {
   getAllColumnMappings,
   saveImport,
   getLearnedCategories,
-  saveLearnedCategories,
+  setLearnedCategory,
   replaceAll,
+  putTransactions,
 } from "./db.js";
 import type { StoredTransaction, ImportRecord, NamedColumnMapping } from "./schema.js";
 import type { BackupData } from "./backup.js";
-import type { LearnedCategories } from "../category/classify.js";
+import {
+  classifyDescription,
+  UNCATEGORIZED,
+  type CategoryRule,
+  type LearnedCategories,
+} from "../category/classify.js";
 import type { ColumnMapping } from "../csv/column-mapping.js";
 
 /**
@@ -114,6 +120,16 @@ async function seed(
   );
 }
 
+/** 学習カテゴリのセットアップ。1件ずつしか書けないので順に呼ぶ */
+async function seedLearned(
+  db: IDBDatabase,
+  learned: LearnedCategories,
+): Promise<void> {
+  for (const [description, category] of Object.entries(learned)) {
+    await setLearnedCategory(db, description, category);
+  }
+}
+
 /** 4ストアすべてに1件ずつ、あとで消えたと判別できるデータを入れる */
 async function seedAllStores(db: IDBDatabase): Promise<void> {
   await seed(db, {
@@ -121,7 +137,7 @@ async function seedAllStores(db: IDBDatabase): Promise<void> {
     record: importOf({ id: "old-i", fileName: "old.csv" }),
     mapping: namedMappingOf({ name: "旧マッピング" }),
   });
-  await saveLearnedCategories(db, { 旧摘要: "旧カテゴリ" });
+  await seedLearned(db, { 旧摘要: "旧カテゴリ" });
 }
 
 describe("openDatabase", () => {
@@ -351,7 +367,7 @@ describe("saveImport", () => {
       ["セブンイレブン渋谷店", "食費"],
       ["JR東日本", "交通費"],
     ]);
-    await saveLearnedCategories(db, learned);
+    await seedLearned(db, learned);
 
     await saveImport(db, [transactionOf()], importOf(), namedMappingOf());
 
@@ -618,7 +634,7 @@ describe("saveImport の原子性", () => {
   it("失敗しても、学習カテゴリは変わらない", async () => {
     const db = await freshDatabase();
     const learned = { セブンイレブン渋谷店: "食費" };
-    await saveLearnedCategories(db, learned);
+    await seedLearned(db, learned);
 
     const outcome = await outcomeOf(() =>
       saveImport(db, NEW_TRANSACTIONS, recordWithoutId(), NEW_MAPPING),
@@ -684,54 +700,9 @@ describe("学習カテゴリ", () => {
     const db = await freshDatabase();
     const learned = { セブンイレブン渋谷店: "食費", "JR東日本": "交通費" };
 
-    await saveLearnedCategories(db, learned);
+    await seedLearned(db, learned);
 
     expect(await getLearnedCategories(db)).toEqual(learned);
-  });
-
-  it("同じ摘要のカテゴリを変えて保存すると、後の値になる", async () => {
-    const db = await freshDatabase();
-    await saveLearnedCategories(db, { セブンイレブン渋谷店: "食費" });
-
-    await saveLearnedCategories(db, { セブンイレブン渋谷店: "日用品" });
-
-    const learned = await getLearnedCategories(db);
-    expect(learned).toEqual({ セブンイレブン渋谷店: "日用品" });
-    expect(Object.keys(learned)).toHaveLength(1);
-  });
-
-  it("総入れ替えである：渡されなかったキーは消える", async () => {
-    const db = await freshDatabase();
-    await saveLearnedCategories(db, { セブンイレブン渋谷店: "食費", "JR東日本": "交通費" });
-
-    await saveLearnedCategories(db, { セブンイレブン渋谷店: "食費" });
-
-    const learned = await getLearnedCategories(db);
-    expect(Object.keys(learned)).toEqual(["セブンイレブン渋谷店"]);
-    expect(learned).toEqual({ セブンイレブン渋谷店: "食費" });
-    expect(Object.hasOwn(learned, "JR東日本")).toBe(false);
-  });
-
-  it("総入れ替えである：まったく別のキーだけを渡すと、以前のキーは1つも残らない", async () => {
-    const db = await freshDatabase();
-    await saveLearnedCategories(db, { A: "食費", B: "交通費", C: "日用品" });
-
-    await saveLearnedCategories(db, { D: "住居費" });
-
-    const learned = await getLearnedCategories(db);
-    expect(Object.keys(learned)).toEqual(["D"]);
-    expect(learned).toEqual({ D: "住居費" });
-  });
-
-  it("空オブジェクトを保存すると、全部消える", async () => {
-    const db = await freshDatabase();
-    await saveLearnedCategories(db, { セブンイレブン渋谷店: "食費", "JR東日本": "交通費" });
-
-    await saveLearnedCategories(db, {});
-
-    const learned = await getLearnedCategories(db);
-    expect(learned).toEqual({});
-    expect(Object.keys(learned)).toEqual([]);
   });
 
   it("摘要が __proto__ や constructor でも、往復して文字列として取れる", async () => {
@@ -743,7 +714,7 @@ describe("学習カテゴリ", () => {
       ["hasOwnProperty", "住居費"],
     ]);
 
-    await saveLearnedCategories(db, learned);
+    await seedLearned(db, learned);
 
     const restored = await getLearnedCategories(db);
     expect(typeof restored["__proto__"]).toBe("string");
@@ -761,7 +732,7 @@ describe("学習カテゴリ", () => {
 
   it("摘要が空文字列でも往復する", async () => {
     const db = await freshDatabase();
-    await saveLearnedCategories(db, { "": "未分類扱いの空摘要" });
+    await seedLearned(db, { "": "未分類扱いの空摘要" });
 
     const learned = await getLearnedCategories(db);
     expect(Object.keys(learned)).toEqual([""]);
@@ -772,11 +743,477 @@ describe("学習カテゴリ", () => {
     const db = await freshDatabase();
     await seedAllStores(db);
 
-    await saveLearnedCategories(db, { 新摘要: "新カテゴリ" });
+    await seedLearned(db, { 新摘要: "新カテゴリ" });
 
     expect(await getAllTransactions(db)).toHaveLength(1);
     expect(await getAllImports(db)).toHaveLength(1);
     expect(await getAllColumnMappings(db)).toHaveLength(1);
+  });
+});
+
+/**
+ * 単一の摘要だけを更新する API。マップ全体を受け取る旧 API では、呼び出し側が
+ * 「全体を読む → 1件直す → 全体を書き戻す」をせざるを得ず、2件を続けて直すと
+ * 先行の修正がエラーも出さずに消えた（lost update）。ここでは取り消しの意味論と、
+ * その窓が無いことを検査する。
+ */
+describe("setLearnedCategory", () => {
+  const POLLUTED_NAMES = ["__proto__", "constructor", "toString"];
+
+  describe("覚える", () => {
+    it("空のデータベースに1件覚えると、読み戻せる", async () => {
+      const db = await freshDatabase();
+
+      await expect(
+        setLearnedCategory(db, "セブンイレブン渋谷店", "食費"),
+      ).resolves.toBeUndefined();
+
+      expect(await getLearnedCategories(db)).toEqual({ セブンイレブン渋谷店: "食費" });
+    });
+
+    it("別々の摘要を続けて覚えると、両方とも残る", async () => {
+      const db = await freshDatabase();
+
+      await setLearnedCategory(db, "セブンイレブン渋谷店", "食費");
+      await setLearnedCategory(db, "JR東日本", "交通費");
+
+      expect(await getLearnedCategories(db)).toEqual({
+        セブンイレブン渋谷店: "食費",
+        "JR東日本": "交通費",
+      });
+    });
+
+    it("同じ摘要に別のカテゴリを覚えさせると、増えずに置き換わる", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "セブンイレブン渋谷店", "食費");
+
+      await setLearnedCategory(db, "セブンイレブン渋谷店", "日用品");
+
+      const learned = await getLearnedCategories(db);
+      expect(learned).toEqual({ セブンイレブン渋谷店: "日用品" });
+      expect(Object.keys(learned)).toHaveLength(1);
+    });
+
+    it("上書きしても、他の摘要の記録は変わらない", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, {
+        セブンイレブン渋谷店: "食費",
+        "JR東日本": "交通費",
+        "Amazon.co.jp": "書籍",
+      });
+
+      await setLearnedCategory(db, "JR東日本", "旅費");
+
+      expect(await getLearnedCategories(db)).toEqual({
+        セブンイレブン渋谷店: "食費",
+        "JR東日本": "旅費",
+        "Amazon.co.jp": "書籍",
+      });
+    });
+
+    it("同じ摘要・同じカテゴリを2回指定しても、1件のまま", async () => {
+      const db = await freshDatabase();
+
+      await setLearnedCategory(db, "ローソン", "コンビニ");
+      await setLearnedCategory(db, "ローソン", "コンビニ");
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.keys(learned)).toEqual(["ローソン"]);
+      expect(learned["ローソン"]).toBe("コンビニ");
+    });
+
+    it("摘要が空文字列でも覚えられる", async () => {
+      const db = await freshDatabase();
+
+      await setLearnedCategory(db, "", "手入力");
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.keys(learned)).toEqual([""]);
+      expect(learned[""]).toBe("手入力");
+    });
+
+    it("カテゴリが空文字列のときは、未分類ではないので消さずに覚える", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "ローソン", "コンビニ");
+
+      await setLearnedCategory(db, "ローソン", "");
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.hasOwn(learned, "ローソン")).toBe(true);
+      expect(learned).toEqual({ ローソン: "" });
+    });
+
+    it.each([
+      ["末尾に空白が付いた未分類", "未分類 "],
+      ["先頭に空白が付いた未分類", " 未分類"],
+      ["未分類の部分文字列", "未分"],
+      ["未分類を含む長い文字列", "未分類あつかい"],
+    ])(
+      "カテゴリが %s のときは、取り消しではなく普通に覚える（前方・部分一致で消さない）",
+      async (_name, category) => {
+        const db = await freshDatabase();
+        await setLearnedCategory(db, "ローソン", "コンビニ");
+
+        await setLearnedCategory(db, "ローソン", category);
+
+        const learned = await getLearnedCategories(db);
+        expect(Object.hasOwn(learned, "ローソン")).toBe(true);
+        expect(learned["ローソン"]).toBe(category);
+        expect(Object.keys(learned)).toHaveLength(1);
+      },
+    );
+
+    for (const name of POLLUTED_NAMES) {
+      it(`摘要が "${name}" でも、覚えて文字列として読み戻せる`, async () => {
+        const db = await freshDatabase();
+
+        await setLearnedCategory(db, name, "食費");
+        await setLearnedCategory(db, "ローソン", "コンビニ");
+
+        const learned = await getLearnedCategories(db);
+        expect(Object.hasOwn(learned, name)).toBe(true);
+        expect(typeof learned[name]).toBe("string");
+        expect(learned[name]).toBe("食費");
+        expect(learned["ローソン"]).toBe("コンビニ");
+      });
+    }
+  });
+
+  /**
+   * 一度覚えた分類を消す経路が無いと、間違って覚えさせたものを直せなくなる。
+   * 取り消しは "未分類" を指定することで行う。
+   */
+  describe("未分類を指定したとき、記録を消す", () => {
+    it("覚えた記録が消える", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "ローソン", "コンビニ");
+
+      await setLearnedCategory(db, "ローソン", UNCATEGORIZED);
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.hasOwn(learned, "ローソン")).toBe(false);
+      expect(learned).toEqual({});
+    });
+
+    it("消しても、他の摘要の記録は消えない", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, {
+        ローソン: "コンビニ",
+        "Amazon.co.jp": "書籍",
+        "JR東日本": "交通費",
+      });
+
+      await setLearnedCategory(db, "Amazon.co.jp", UNCATEGORIZED);
+
+      expect(await getLearnedCategories(db)).toEqual({
+        ローソン: "コンビニ",
+        "JR東日本": "交通費",
+      });
+    });
+
+    it("完全一致した摘要だけが消える（部分一致する摘要は残る）", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, {
+        セブンイレブン: "食費",
+        セブンイレブン渋谷店: "交際費",
+      });
+
+      await setLearnedCategory(db, "セブンイレブン", UNCATEGORIZED);
+
+      expect(await getLearnedCategories(db)).toEqual({ セブンイレブン渋谷店: "交際費" });
+    });
+
+    it("消した後、同じ摘要にもう一度別のカテゴリを覚えさせられる", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "ローソン", "コンビニ");
+      await setLearnedCategory(db, "ローソン", UNCATEGORIZED);
+
+      await setLearnedCategory(db, "ローソン", "食費");
+
+      const learned = await getLearnedCategories(db);
+      expect(learned).toEqual({ ローソン: "食費" });
+      expect(Object.keys(learned)).toHaveLength(1);
+    });
+
+    it("存在しない摘要に未分類を指定しても、reject せず内容も変わらない", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "Amazon.co.jp", "書籍");
+
+      await expect(
+        setLearnedCategory(db, "ローソン", UNCATEGORIZED),
+      ).resolves.toBeUndefined();
+
+      expect(await getLearnedCategories(db)).toEqual({ "Amazon.co.jp": "書籍" });
+    });
+
+    it("空のデータベースに未分類を指定しても、reject せず空のまま", async () => {
+      const db = await freshDatabase();
+
+      await expect(
+        setLearnedCategory(db, "ローソン", UNCATEGORIZED),
+      ).resolves.toBeUndefined();
+
+      const learned = await getLearnedCategories(db);
+      expect(learned).toEqual({});
+      expect(Object.keys(learned)).toEqual([]);
+    });
+
+    it("摘要が空文字列の記録も消せる", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, { "": "手入力", ローソン: "コンビニ" });
+
+      await setLearnedCategory(db, "", UNCATEGORIZED);
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.hasOwn(learned, "")).toBe(false);
+      expect(learned).toEqual({ ローソン: "コンビニ" });
+    });
+
+    for (const name of POLLUTED_NAMES) {
+      it(`摘要が "${name}" の記録も消せる`, async () => {
+        const db = await freshDatabase();
+        await setLearnedCategory(db, name, "食費");
+        await setLearnedCategory(db, "ローソン", "コンビニ");
+
+        await setLearnedCategory(db, name, UNCATEGORIZED);
+
+        const learned = await getLearnedCategories(db);
+        expect(Object.hasOwn(learned, name)).toBe(false);
+        expect(Object.keys(learned)).toEqual(["ローソン"]);
+      });
+
+      it(`覚えていない "${name}" に未分類を指定しても、reject せず内容が変わらない`, async () => {
+        const db = await freshDatabase();
+        await setLearnedCategory(db, "ローソン", "コンビニ");
+
+        await expect(
+          setLearnedCategory(db, name, UNCATEGORIZED),
+        ).resolves.toBeUndefined();
+
+        const learned = await getLearnedCategories(db);
+        expect(Object.hasOwn(learned, name)).toBe(false);
+        expect(Object.keys(learned)).toEqual(["ローソン"]);
+      });
+    }
+  });
+
+  describe("学習カテゴリ以外のストアに触らない", () => {
+    it("覚えても、取引・履歴・列マッピングは変わらない", async () => {
+      const db = await freshDatabase();
+      await seedAllStores(db);
+      const transactionsBefore = await getAllTransactions(db);
+      const importsBefore = await getAllImports(db);
+      const mappingsBefore = await getAllColumnMappings(db);
+      expect(transactionsBefore).toHaveLength(1);
+
+      await setLearnedCategory(db, "新摘要", "新カテゴリ");
+
+      expect(await getAllTransactions(db)).toEqual(transactionsBefore);
+      expect(await getAllImports(db)).toEqual(importsBefore);
+      expect(await getAllColumnMappings(db)).toEqual(mappingsBefore);
+      expect(await getLearnedCategories(db)).toEqual({
+        旧摘要: "旧カテゴリ",
+        新摘要: "新カテゴリ",
+      });
+    });
+
+    it("取り消しても、取引・履歴・列マッピングは変わらない", async () => {
+      const db = await freshDatabase();
+      await seedAllStores(db);
+      const transactionsBefore = await getAllTransactions(db);
+      const importsBefore = await getAllImports(db);
+      const mappingsBefore = await getAllColumnMappings(db);
+      expect(mappingsBefore).toHaveLength(1);
+
+      await setLearnedCategory(db, "旧摘要", UNCATEGORIZED);
+
+      expect(await getAllTransactions(db)).toEqual(transactionsBefore);
+      expect(await getAllImports(db)).toEqual(importsBefore);
+      expect(await getAllColumnMappings(db)).toEqual(mappingsBefore);
+      expect(await getLearnedCategories(db)).toEqual({});
+    });
+  });
+
+  describe("失敗したとき", () => {
+    it("閉じた接続に覚えさせようとすると、Promise が reject する", async () => {
+      const db = await freshDatabase();
+      db.close();
+
+      await expect(setLearnedCategory(db, "ローソン", "コンビニ")).rejects.toThrow();
+    });
+
+    it("閉じた接続に取り消しを指定しても、Promise が reject する", async () => {
+      const db = await freshDatabase();
+      db.close();
+
+      await expect(
+        setLearnedCategory(db, "ローソン", UNCATEGORIZED),
+      ).rejects.toThrow();
+    });
+
+    it("失敗しても、既に覚えた記録は残る", async () => {
+      const factory = new IDBFactory();
+      const db = await openDatabase(factory);
+      await setLearnedCategory(db, "ローソン", "コンビニ");
+      db.close();
+
+      await expect(
+        setLearnedCategory(db, "セブンイレブン渋谷店", "食費"),
+      ).rejects.toThrow();
+
+      const reopened = await openDatabase(factory);
+      expect(await getLearnedCategories(reopened)).toEqual({ ローソン: "コンビニ" });
+    });
+  });
+
+  /**
+   * 旧 API は「全体を読む → 1件直す → 全体を書き戻す」だったので、2件の更新が
+   * 重なると先に書いた側が黙って消えた。ユーザーが明示的に入力した分類が
+   * エラーも無く失われるので、ここが最も重要な検査になる。
+   */
+  describe("同時更新で記録が失われない", () => {
+    it("異なる摘要への同時更新が、1件も失われない", async () => {
+      const db = await freshDatabase();
+
+      await Promise.all([
+        setLearnedCategory(db, "セブンイレブン渋谷店", "食費"),
+        setLearnedCategory(db, "JR東日本", "交通費"),
+        setLearnedCategory(db, "Amazon.co.jp", "書籍"),
+      ]);
+
+      const learned = await getLearnedCategories(db);
+      expect(learned).toEqual({
+        セブンイレブン渋谷店: "食費",
+        "JR東日本": "交通費",
+        "Amazon.co.jp": "書籍",
+      });
+      expect(Object.keys(learned)).toHaveLength(3);
+    });
+
+    it("既存の記録があるとき、同時更新しても既存は消えない", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, { 既存A: "食費", 既存B: "交通費" });
+
+      await Promise.all([
+        setLearnedCategory(db, "新A", "日用品"),
+        setLearnedCategory(db, "新B", "住居費"),
+      ]);
+
+      expect(await getLearnedCategories(db)).toEqual({
+        既存A: "食費",
+        既存B: "交通費",
+        新A: "日用品",
+        新B: "住居費",
+      });
+    });
+
+    it("多数の摘要を同時に更新しても、全件残る", async () => {
+      const db = await freshDatabase();
+      const entries = Array.from(
+        { length: 20 },
+        (_, index) => [`摘要-${index}`, `カテゴリ-${index}`] as const,
+      );
+
+      await Promise.all(
+        entries.map(([description, category]) =>
+          setLearnedCategory(db, description, category),
+        ),
+      );
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.keys(learned)).toHaveLength(entries.length);
+      expect(learned).toEqual(learnedOf(entries));
+    });
+
+    it("覚えると取り消しを同時に走らせても、取り消した記録だけが消える", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, { 消す対象: "食費", 残る記録: "交通費" });
+
+      await Promise.all([
+        setLearnedCategory(db, "消す対象", UNCATEGORIZED),
+        setLearnedCategory(db, "新しい記録", "書籍"),
+      ]);
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.hasOwn(learned, "消す対象")).toBe(false);
+      expect(learned).toEqual({ 残る記録: "交通費", 新しい記録: "書籍" });
+    });
+
+    it("同じ摘要への同時更新では、どちらか一方だけが残る", async () => {
+      const db = await freshDatabase();
+
+      await Promise.all([
+        setLearnedCategory(db, "セブンイレブン渋谷店", "食費"),
+        setLearnedCategory(db, "セブンイレブン渋谷店", "日用品"),
+      ]);
+
+      const learned = await getLearnedCategories(db);
+      expect(Object.keys(learned)).toEqual(["セブンイレブン渋谷店"]);
+      expect(["食費", "日用品"]).toContain(learned["セブンイレブン渋谷店"]);
+    });
+
+    it("同じ摘要への「覚える」と「取り消し」が重なっても、他の記録は無傷", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, { 競合する摘要: "旧カテゴリ", 無関係な摘要: "交通費" });
+
+      await Promise.all([
+        setLearnedCategory(db, "競合する摘要", "食費"),
+        setLearnedCategory(db, "競合する摘要", UNCATEGORIZED),
+      ]);
+
+      const learned = await getLearnedCategories(db);
+      expect(learned["無関係な摘要"]).toBe("交通費");
+      // どちらが勝つかは決めない。旧カテゴリが生き残るのだけは誤り
+      // （両方の更新が失われたことになる）
+      expect(Object.values(learned)).not.toContain("旧カテゴリ");
+      expect(
+        Object.keys(learned).filter(
+          (key) => key !== "無関係な摘要" && key !== "競合する摘要",
+        ),
+      ).toEqual([]);
+      if (Object.hasOwn(learned, "競合する摘要")) {
+        expect(learned["競合する摘要"]).toBe("食費");
+      }
+    });
+  });
+
+  /**
+   * 取り消しの意味論が「間違って覚えた分類を直せる」ことに繋がっているかは、
+   * 保存内容だけでなく分類結果で見ないと分からない。
+   */
+  describe("classifyDescription との組み合わせ", () => {
+    const RULES: readonly CategoryRule[] = Object.freeze([
+      Object.freeze({ pattern: "amazon", category: "買い物" }),
+    ]);
+    const NO_RULES: readonly CategoryRule[] = Object.freeze([]);
+
+    it("覚えた摘要は、次の分類でルールより優先される", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "Amazon.co.jp", "書籍");
+
+      const learned = await getLearnedCategories(db);
+      expect(classifyDescription("Amazon.co.jp", RULES, learned)).toBe("書籍");
+    });
+
+    it("未分類で取り消すと、ルールの判定に戻る", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "Amazon.co.jp", "書籍");
+      await setLearnedCategory(db, "Amazon.co.jp", UNCATEGORIZED);
+
+      const learned = await getLearnedCategories(db);
+      expect(classifyDescription("Amazon.co.jp", RULES, learned)).toBe("買い物");
+    });
+
+    it("ルールにも当たらない摘要の記録を取り消すと、未分類に戻る", async () => {
+      const db = await freshDatabase();
+      await setLearnedCategory(db, "ローソン渋谷店", "コンビニ");
+      await setLearnedCategory(db, "ローソン渋谷店", UNCATEGORIZED);
+
+      const learned = await getLearnedCategories(db);
+      expect(classifyDescription("ローソン渋谷店", NO_RULES, learned)).toBe(
+        UNCATEGORIZED,
+      );
+    });
   });
 });
 
@@ -1027,5 +1464,414 @@ describe("replaceAll の原子性", () => {
     await replaceAll(db, backupOf({ transactions: restored }));
 
     expect(await getAllTransactions(db)).toEqual(restored);
+  });
+});
+
+/**
+ * 再分類の結果（カテゴリだけ変わった取引）を書き戻す用途。書き込み先は transactions
+ * ストアだけで、取り込み履歴・列マッピング・学習カテゴリには触らない。
+ */
+describe("putTransactions", () => {
+  it("空配列を渡しても成功する", async () => {
+    const db = await freshDatabase();
+
+    await expect(putTransactions(db, [])).resolves.toBeUndefined();
+
+    expect(await getAllTransactions(db)).toEqual([]);
+  });
+
+  it("空配列を渡すと、既存の取引は1件も変わらない", async () => {
+    const db = await freshDatabase();
+    const existing = [
+      transactionOf({ id: "keep-1", category: "食費" }),
+      transactionOf({ id: "keep-2", category: "未分類" }),
+    ];
+    await seed(db, { transactions: existing });
+
+    await putTransactions(db, []);
+
+    expect(byId(await getAllTransactions(db))).toEqual(byId(existing));
+  });
+
+  it("存在しない id を渡すと、新しく追加される", async () => {
+    const db = await freshDatabase();
+    const added = transactionOf({ id: "brand-new", category: "交通費" });
+
+    await expect(putTransactions(db, [added])).resolves.toBeUndefined();
+
+    expect(await getAllTransactions(db)).toEqual([added]);
+  });
+
+  it("空のデータベースに複数件を追加できる", async () => {
+    const db = await freshDatabase();
+    const added = [
+      transactionOf({ id: "a", category: "食費" }),
+      transactionOf({ id: "b", category: "交通費" }),
+      transactionOf({ id: "c", category: "未分類" }),
+    ];
+
+    await putTransactions(db, added);
+
+    expect(byId(await getAllTransactions(db))).toEqual(byId(added));
+  });
+
+  it("同じ id の取引は、カテゴリが置き換わる（再分類の書き戻し）", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: [transactionOf({ id: "a", category: "未分類" })] });
+
+    const reclassified = transactionOf({ id: "a", category: "食費" });
+    await putTransactions(db, [reclassified]);
+
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(1);
+    expect(stored).toEqual([reclassified]);
+    expect(stored.map((row) => row.category)).not.toContain("未分類");
+  });
+
+  it("同じ id の取引は、カテゴリ以外も含めて内容がまるごと置き換わる", async () => {
+    const db = await freshDatabase();
+    const before = transactionOf({
+      id: "same",
+      date: "2026-01-15",
+      amountYen: -500,
+      description: "旧摘要",
+      source: "card",
+      category: "未分類",
+    });
+    await seed(db, { transactions: [before] });
+
+    const after = transactionOf({
+      id: "same",
+      date: "2026-02-20",
+      amountYen: 1200,
+      description: "新摘要",
+      source: "bank",
+      category: "収入",
+    });
+    await putTransactions(db, [after]);
+
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(1);
+    expect(stored).toEqual([after]);
+    expect(stored[0]).not.toMatchObject({ description: "旧摘要" });
+  });
+
+  it("渡していない id の既存取引は影響を受けない", async () => {
+    const db = await freshDatabase();
+    const untouched = transactionOf({ id: "untouched", category: "交通費", description: "残る" });
+    await seed(db, {
+      transactions: [untouched, transactionOf({ id: "target", category: "未分類" })],
+    });
+
+    const updated = transactionOf({ id: "target", category: "日用品" });
+    await putTransactions(db, [updated]);
+
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(2);
+    expect(byId(stored)).toEqual(byId([untouched, updated]));
+  });
+
+  it("既存の上書きと新規追加が1回の呼び出しで混在できる", async () => {
+    const db = await freshDatabase();
+    await seed(db, {
+      transactions: [
+        transactionOf({ id: "keep", category: "食費", description: "触らない" }),
+        transactionOf({ id: "update", category: "未分類" }),
+      ],
+    });
+
+    const updated = transactionOf({ id: "update", category: "住居費" });
+    const inserted = transactionOf({ id: "insert", category: "交通費" });
+    await putTransactions(db, [updated, inserted]);
+
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(3);
+    expect(byId(stored)).toEqual(
+      byId([transactionOf({ id: "keep", category: "食費", description: "触らない" }), updated, inserted]),
+    );
+  });
+
+  it("取り込み履歴・列マッピング・学習カテゴリには触らない", async () => {
+    const db = await freshDatabase();
+    await seedAllStores(db);
+    const importsBefore = await getAllImports(db);
+    const mappingsBefore = await getAllColumnMappings(db);
+    const learnedBefore = await getLearnedCategories(db);
+
+    await putTransactions(db, [transactionOf({ id: "old-t", category: "再分類後" })]);
+
+    expect(await getAllImports(db)).toEqual(importsBefore);
+    expect(await getAllColumnMappings(db)).toEqual(mappingsBefore);
+    expect(await getLearnedCategories(db)).toEqual(learnedBefore);
+  });
+
+  it("空配列でも、取り込み履歴・列マッピング・学習カテゴリは消えない", async () => {
+    const db = await freshDatabase();
+    await seedAllStores(db);
+
+    await putTransactions(db, []);
+
+    expect(await getAllImports(db)).toHaveLength(1);
+    expect(await getAllColumnMappings(db)).toHaveLength(1);
+    expect(await getLearnedCategories(db)).toEqual(learnedOf([["旧摘要", "旧カテゴリ"]]));
+  });
+
+  it("各フィールドの境界値が、上書き後もそのまま往復する", async () => {
+    const db = await freshDatabase();
+    await seed(db, {
+      transactions: [
+        transactionOf({ id: "a", category: "未分類" }),
+        transactionOf({ id: "b", category: "未分類" }),
+        transactionOf({ id: "c", category: "未分類" }),
+      ],
+    });
+
+    const updated = [
+      transactionOf({ id: "a", amountYen: 0, description: "", category: "" }),
+      transactionOf({
+        id: "b",
+        amountYen: Number.MAX_SAFE_INTEGER,
+        date: "2000-02-29",
+        source: "cash",
+        category: "収入",
+      }),
+      transactionOf({ id: "c", amountYen: -1, description: "改行\nとカンマ, を含む摘要" }),
+    ];
+    await putTransactions(db, updated);
+
+    expect(byId(await getAllTransactions(db))).toEqual(byId(updated));
+  });
+
+  it("id が空文字列でも保存でき、後から同じ id で上書きできる", async () => {
+    const db = await freshDatabase();
+
+    await putTransactions(db, [transactionOf({ id: "", category: "未分類" })]);
+    await putTransactions(db, [transactionOf({ id: "", category: "食費" })]);
+
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(1);
+    expect(stored).toEqual([transactionOf({ id: "", category: "食費" })]);
+  });
+
+  it("同じ id を1つの配列に2回入れると、後の内容が残る（put の意味論）", async () => {
+    const db = await freshDatabase();
+
+    await putTransactions(db, [
+      transactionOf({ id: "dup", category: "先", description: "先" }),
+      transactionOf({ id: "dup", category: "後", description: "後" }),
+    ]);
+
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(1);
+    expect(stored).toEqual([transactionOf({ id: "dup", category: "後", description: "後" })]);
+  });
+
+  it("凍結された配列・要素を渡しても成功する", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: [transactionOf({ id: "a", category: "未分類" })] });
+
+    const frozen = Object.freeze([Object.freeze(transactionOf({ id: "a", category: "食費" }))]);
+    await expect(putTransactions(db, frozen)).resolves.toBeUndefined();
+
+    expect(await getAllTransactions(db)).toEqual([transactionOf({ id: "a", category: "食費" })]);
+  });
+
+  it("連続して呼び出すと、最後に書いた内容が残る", async () => {
+    const db = await freshDatabase();
+
+    await putTransactions(db, [transactionOf({ id: "a", category: "1回目" })]);
+    await putTransactions(db, [transactionOf({ id: "a", category: "2回目" })]);
+    await putTransactions(db, [transactionOf({ id: "b", category: "別の取引" })]);
+
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(2);
+    expect(byId(stored)).toEqual(
+      byId([
+        transactionOf({ id: "a", category: "2回目" }),
+        transactionOf({ id: "b", category: "別の取引" }),
+      ]),
+    );
+  });
+
+  it("saveImport で保存した取引も上書きできる（保存経路が違っても同じストア）", async () => {
+    const db = await freshDatabase();
+    await saveImport(
+      db,
+      [transactionOf({ id: "imported", category: "未分類" })],
+      importOf({ id: "i-1" }),
+      namedMappingOf({ name: "m-1" }),
+    );
+
+    await putTransactions(db, [transactionOf({ id: "imported", category: "食費" })]);
+
+    expect(await getAllTransactions(db)).toEqual([
+      transactionOf({ id: "imported", category: "食費" }),
+    ]);
+  });
+});
+
+/**
+ * 1件ずつ別トランザクションで put する実装だと、途中で失敗したときに「先頭だけ書けた」
+ * 状態が残る。再分類の書き戻しでそれが起きると、一部の取引だけカテゴリが変わった
+ * 中途半端な状態になる。ここではその状態が残らないことを検査する。
+ */
+describe("putTransactions の原子性", () => {
+  /** transactions ストアの keyPath は "id"。id を持たない要素は put に失敗する */
+  function transactionWithoutId(): StoredTransaction {
+    return {
+      date: "2026-03-01",
+      amountYen: -1200,
+      description: "id を持たない取引",
+      source: "card",
+      category: "食費",
+    } as unknown as StoredTransaction;
+  }
+
+  /** keyPath が undefined に解決される場合も、有効なキーが無いので put に失敗する */
+  function transactionWithUndefinedId(): StoredTransaction {
+    return { ...transactionOf(), id: undefined } as unknown as StoredTransaction;
+  }
+
+  const EXISTING = [
+    transactionOf({ id: "keep-1", description: "既存1", category: "食費" }),
+    transactionOf({ id: "keep-2", description: "既存2", category: "交通費", amountYen: -100 }),
+  ];
+
+  /** 同期的に投げても reject でも「失敗した」と扱えるようにする */
+  async function outcomeOf(run: () => Promise<unknown>): Promise<"成功" | "失敗"> {
+    try {
+      await run();
+      return "成功";
+    } catch {
+      return "失敗";
+    }
+  }
+
+  it("id を持たない取引を含むとき、呼び出しが reject される", async () => {
+    const db = await freshDatabase();
+
+    await expect(putTransactions(db, [transactionWithoutId()])).rejects.toThrow();
+  });
+
+  it("id が undefined の取引を含むとき、呼び出しが reject される", async () => {
+    const db = await freshDatabase();
+
+    await expect(putTransactions(db, [transactionWithUndefinedId()])).rejects.toThrow();
+  });
+
+  it("配列の途中が壊れているとき、その前後の正しい取引も入らない", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: EXISTING });
+
+    const outcome = await outcomeOf(() =>
+      putTransactions(db, [
+        transactionOf({ id: "before-broken", description: "壊れた要素の前" }),
+        transactionWithoutId(),
+        transactionOf({ id: "after-broken", description: "壊れた要素の後" }),
+      ]),
+    );
+
+    expect(outcome).toBe("失敗");
+    const storedIds = (await getAllTransactions(db)).map((row) => row.id);
+    expect(storedIds).not.toContain("before-broken");
+    expect(storedIds).not.toContain("after-broken");
+    expect(byId(await getAllTransactions(db))).toEqual(byId(EXISTING));
+  });
+
+  it("壊れた要素が配列の末尾にあっても、先頭の正しい取引は入らない", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: EXISTING });
+
+    const outcome = await outcomeOf(() =>
+      putTransactions(db, [
+        transactionOf({ id: "first", description: "先頭" }),
+        transactionOf({ id: "second", description: "2番目" }),
+        transactionWithoutId(),
+      ]),
+    );
+
+    expect(outcome).toBe("失敗");
+    const storedIds = (await getAllTransactions(db)).map((row) => row.id);
+    expect(storedIds).not.toContain("first");
+    expect(storedIds).not.toContain("second");
+    expect(byId(await getAllTransactions(db))).toEqual(byId(EXISTING));
+  });
+
+  it("既存の取引と同じ id を含む呼び出しが失敗しても、既存の内容は上書きされない", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: EXISTING });
+
+    const outcome = await outcomeOf(() =>
+      putTransactions(db, [
+        transactionOf({ id: "keep-1", category: "上書きされてはいけないカテゴリ" }),
+        transactionWithoutId(),
+      ]),
+    );
+
+    expect(outcome).toBe("失敗");
+    const stored = await getAllTransactions(db);
+    expect(stored.map((row) => row.category)).not.toContain("上書きされてはいけないカテゴリ");
+    expect(byId(stored)).toEqual(byId(EXISTING));
+  });
+
+  it("失敗しても、既存の取引が消えることはない", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: EXISTING });
+
+    const outcome = await outcomeOf(() => putTransactions(db, [transactionWithoutId()]));
+
+    expect(outcome).toBe("失敗");
+    const stored = await getAllTransactions(db);
+    expect(stored).toHaveLength(EXISTING.length);
+    expect(byId(stored)).toEqual(byId(EXISTING));
+  });
+
+  it("失敗しても、取り込み履歴・列マッピング・学習カテゴリは変わらない", async () => {
+    const db = await freshDatabase();
+    await seedAllStores(db);
+
+    const outcome = await outcomeOf(() =>
+      putTransactions(db, [transactionOf({ id: "new-t" }), transactionWithoutId()]),
+    );
+
+    expect(outcome).toBe("失敗");
+    expect((await getAllImports(db)).map((row) => row.id)).toEqual(["old-i"]);
+    expect((await getAllColumnMappings(db)).map((m) => m.name)).toEqual(["旧マッピング"]);
+    expect(await getLearnedCategories(db)).toEqual(learnedOf([["旧摘要", "旧カテゴリ"]]));
+  });
+
+  it("id を補えば同じ呼び出しが成功する（失敗の原因が id の欠落であることの対）", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: EXISTING });
+
+    const repaired = { ...transactionWithoutId(), id: "repaired" };
+    await expect(
+      putTransactions(db, [
+        transactionOf({ id: "before-broken", description: "壊れた要素の前" }),
+        repaired,
+        transactionOf({ id: "after-broken", description: "壊れた要素の後" }),
+      ]),
+    ).resolves.toBeUndefined();
+
+    expect(byId(await getAllTransactions(db))).toEqual(
+      byId([
+        ...EXISTING,
+        transactionOf({ id: "before-broken", description: "壊れた要素の前" }),
+        repaired,
+        transactionOf({ id: "after-broken", description: "壊れた要素の後" }),
+      ]),
+    );
+  });
+
+  it("失敗した後でも、正しい引数なら書き戻せる", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: EXISTING });
+
+    expect(await outcomeOf(() => putTransactions(db, [transactionWithoutId()]))).toBe("失敗");
+
+    const updated = transactionOf({ id: "keep-1", description: "既存1", category: "日用品" });
+    await putTransactions(db, [updated]);
+
+    expect(byId(await getAllTransactions(db))).toEqual(byId([updated, EXISTING[1]!]));
   });
 });

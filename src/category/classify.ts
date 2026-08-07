@@ -1,3 +1,5 @@
+import { normalizeDescription } from "./normalize.js";
+
 export const UNCATEGORIZED = "未分類";
 
 export interface CategoryRule {
@@ -35,37 +37,22 @@ export function classifyDescription(
     return learned[description]!;
   }
 
-  const haystack = description.toLowerCase();
+  // ルールの照合だけ NFKC で畳む。実データの摘要は全角英数・半角カナ・全角
+  // ハイフンが混ざるので、畳まないとどう書いても当たらない（normalize.ts 参照）。
+  // learned を畳まないのは上の通り、ユーザーが直した文字列そのものの記録だから。
+  const haystack = normalizeDescription(description).toLowerCase();
   for (const rule of rules) {
     // 空パターンはあらゆる文字列に含まれてしまう。1本紛れ込むだけで
-    // 全件がそのカテゴリになるので、マッチさせない。
-    if (rule.pattern === "") {
+    // 全件がそのカテゴリになるので、マッチさせない。正規化で空になる
+    // パターン（空白だけなど）も同じ危険があるので、畳んだ後で判定する。
+    const needle = normalizeDescription(rule.pattern).toLowerCase();
+    if (needle === "") {
       continue;
     }
-    if (haystack.includes(rule.pattern.toLowerCase())) {
+    if (haystack.includes(needle)) {
       return rule.category;
     }
   }
 
   return UNCATEGORIZED;
-}
-
-/**
- * 手動修正を学習に反映した新しい記録を返す。引数は書き換えない。
- *
- * 未分類を指定したときは学習を消す。「間違って覚えさせた」を取り消す経路が
- * 無いと、一度ついた分類を直せなくなる。
- */
-export function rememberCategory(
-  learned: LearnedCategories,
-  description: string,
-  category: string,
-): LearnedCategories {
-  if (category === UNCATEGORIZED) {
-    const next: Record<string, string> = { ...learned };
-    delete next[description];
-    return next;
-  }
-
-  return { ...learned, [description]: category };
 }
