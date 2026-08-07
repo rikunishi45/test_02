@@ -3,9 +3,11 @@ import {
   inMonth,
   negateExpense,
   sumByCategory,
+  sumByDay,
   sumByMonth,
   type PeriodTotal,
 } from "../aggregate/period.js";
+import { monthGrid, type CalendarCell } from "../calendar/month-grid.js";
 import { layoutBars, maxOf, niceScale, yOf } from "../chart/bar-chart.js";
 import type { StoredTransaction } from "../storage/schema.js";
 
@@ -31,8 +33,10 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
 
   // 既定は最新月。months は昇順なので末尾。
   const month = selected ?? months[months.length - 1]!.period;
-  const categories = sumByCategory(inMonth(transactions, month));
+  const ofMonth = inMonth(transactions, month);
+  const categories = sumByCategory(ofMonth);
   const total = months.find((m) => m.period === month);
+  const weeks = monthGrid(month, sumByDay(ofMonth));
 
   return (
     <section>
@@ -46,6 +50,8 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
       {total !== undefined && total.incomeYen > 0 && (
         <p style={styles.income}>収入 {YEN.format(total.incomeYen)}</p>
       )}
+
+      <MonthCalendar weeks={weeks} />
 
       {categories.length === 0 ? (
         <p>この月の支出はありません。</p>
@@ -67,6 +73,45 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
         </table>
       )}
     </section>
+  );
+}
+
+const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+
+function MonthCalendar({ weeks }: { weeks: CalendarCell[][] }) {
+  // 濃さの基準はその月の最大。月をまたいで比べるものではないので月内で正規化する。
+  const peak = maxOf(weeks.flat().map((cell) => cell.expenseYen));
+
+  return (
+    <div style={styles.calendar}>
+      {WEEKDAYS.map((label, index) => (
+        <div
+          key={label}
+          style={index === 0 ? styles.weekdaySunday : index === 6 ? styles.weekdaySaturday : styles.weekday}
+        >
+          {label}
+        </div>
+      ))}
+      {weeks.flat().map((cell, index) => (
+        <div key={cell.date ?? `blank-${index}`} style={styles.cell}>
+          {cell.date !== null && (
+            <>
+              <span
+                style={{
+                  ...styles.cellFill,
+                  // peak は 0 になり得る（支出ゼロの月）。0除算を避ける。
+                  opacity: peak > 0 ? cell.expenseYen / peak : 0,
+                }}
+              />
+              <span style={styles.cellDay}>{cell.day}</span>
+              {cell.expenseYen > 0 && (
+                <span style={styles.cellAmount}>{YEN_SHORT.format(cell.expenseYen)}</span>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -163,6 +208,36 @@ const styles = {
   barGroup: { cursor: "pointer" },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
   td: { borderBottom: "1px solid var(--line)", padding: "6px 8px" },
+  calendar: {
+    display: "grid",
+    gridTemplateColumns: "repeat(7, 1fr)",
+    gap: 4,
+    marginTop: 12,
+  },
+  weekday: { fontSize: 12, textAlign: "center", opacity: 0.7, paddingBottom: 2 },
+  weekdaySunday: { fontSize: 12, textAlign: "center", color: "var(--danger)", paddingBottom: 2 },
+  weekdaySaturday: { fontSize: 12, textAlign: "center", color: "var(--accent)", paddingBottom: 2 },
+  cell: {
+    position: "relative",
+    minHeight: 52,
+    border: "1px solid var(--line)",
+    borderRadius: 4,
+    padding: "4px 6px",
+    overflow: "hidden",
+  },
+  cellFill: {
+    position: "absolute",
+    inset: 0,
+    background: "var(--bar)",
+  },
+  cellDay: { position: "relative", fontSize: 12, opacity: 0.75 },
+  cellAmount: {
+    position: "relative",
+    display: "block",
+    fontSize: 12,
+    fontVariantNumeric: "tabular-nums",
+    marginTop: 2,
+  },
   shareTrack: { display: "block", background: "var(--line)", borderRadius: 3, height: 8 },
   shareFill: { display: "block", background: "var(--bar)", borderRadius: 3, height: 8 },
 } as const;
