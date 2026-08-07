@@ -7,13 +7,14 @@ import type { StoredTransaction } from "../storage/schema.js";
 import { useDatabase } from "./useDatabase.js";
 import { ImportScreen } from "./ImportScreen.js";
 import { TransactionList } from "./TransactionList.js";
+import { SummaryScreen } from "./SummaryScreen.js";
 import { BackupPanel } from "./BackupPanel.js";
 
-type Tab = "list" | "import";
+type Tab = "summary" | "list" | "import";
 
 export function App() {
   const database = useDatabase();
-  const [tab, setTab] = useState<Tab>("list");
+  const [tab, setTab] = useState<Tab>("summary");
   const [transactions, setTransactions] = useState<StoredTransaction[]>([]);
   const [learned, setLearned] = useState<LearnedCategories>({});
 
@@ -72,6 +73,13 @@ export function App() {
       <nav style={styles.nav}>
         <button
           type="button"
+          onClick={() => setTab("summary")}
+          style={tab === "summary" ? styles.tabActive : styles.tab}
+        >
+          集計
+        </button>
+        <button
+          type="button"
           onClick={() => setTab("list")}
           style={tab === "list" ? styles.tabActive : styles.tab}
         >
@@ -86,12 +94,14 @@ export function App() {
         </button>
       </nav>
 
-      {tab === "list" ? (
+      {tab === "summary" && <SummaryScreen transactions={transactions} />}
+      {tab === "list" && (
         <TransactionList
           transactions={transactions}
           onCategoryChange={(description, category) => void changeCategory(description, category)}
         />
-      ) : (
+      )}
+      {tab === "import" && (
         <ImportScreen
           db={database.db}
           existing={transactions}

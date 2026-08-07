@@ -1,0 +1,787 @@
+import { describe, it, expect } from "vitest";
+import type { StoredTransaction } from "../storage/schema.js";
+import { UNCATEGORIZED } from "../category/classify.js";
+import {
+  monthOf,
+  sumByMonth,
+  sumByDay,
+  sumByCategory,
+  inMonth,
+  negateExpense,
+  type PeriodTotal,
+  type CategoryTotal,
+} from "./period.js";
+
+const BASE: StoredTransaction = {
+  id: "t0",
+  date: "2026-01-15",
+  amountYen: -1000,
+  description: "店A",
+  source: "card",
+  category: "食費",
+};
+
+let sequence = 0;
+
+function tx(overrides: Partial<StoredTransaction> = {}): StoredTransaction {
+  sequence += 1;
+  return { ...BASE, id: `t${sequence}`, ...overrides };
+}
+
+function at<T>(items: readonly T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) {
+    throw new Error(`index ${index} の要素が存在しない（length=${items.length}）`);
+  }
+  return item;
+}
+
+function periodsOf(totals: readonly PeriodTotal[]): string[] {
+  return totals.map((total) => total.period);
+}
+
+function categoriesOf(totals: readonly CategoryTotal[]): string[] {
+  return totals.map((total) => total.category);
+}
+
+function totalOf(totals: readonly PeriodTotal[], period: string): PeriodTotal {
+  const found = totals.find((total) => total.period === period);
+  if (found === undefined) {
+    throw new Error(`period ${period} のエントリが無い（実際: ${periodsOf(totals).join(",")}）`);
+  }
+  return found;
+}
+
+/**
+ * +0 であることを検査する。Object.is(-0, 0) は false なので toBe が区別する。
+ * 1 / value は失敗時に -Infinity を出して原因を示すための補助。
+ */
+function expectPlusZero(value: number): void {
+  expect(value).toBe(0);
+  expect(1 / value).toBe(Number.POSITIVE_INFINITY);
+}
+
+/** 引数の配列（および各要素）が呼び出しで書き換えられないこと */
+function expectInputUnchanged(
+  transactions: StoredTransaction[],
+  run: (input: StoredTransaction[]) => unknown,
+): void {
+  const before = structuredClone(transactions);
+  run(transactions);
+  expect(transactions).toEqual(before);
+}
+
+describe("monthOf", () => {
+  it("YYYY-MM-DD から YYYY-MM を取り出す", () => {
+    expect(monthOf("2026-01-15")).toBe("2026-01");
+  });
+
+  it("月初の日付でも、その月を返す", () => {
+    expect(monthOf("2026-01-01")).toBe("2026-01");
+  });
+
+  it("月末の日付でも、その月を返す（翌月に繰り上がらない）", () => {
+    expect(monthOf("2026-01-31")).toBe("2026-01");
+  });
+
+  it("年末の日付では、その年の12月を返す（翌年に繰り上がらない）", () => {
+    expect(monthOf("2025-12-31")).toBe("2025-12");
+  });
+
+  it("2桁の月をゼロ詰めのまま保つ", () => {
+    expect(monthOf("2026-10-05")).toBe("2026-10");
+  });
+
+  it("同じ月の別の日は、同じ月を返す", () => {
+    expect(monthOf("2026-03-01")).toBe(monthOf("2026-03-28"));
+  });
+
+  it("月が違えば、違う値を返す", () => {
+    expect(monthOf("2026-03-31")).not.toBe(monthOf("2026-04-01"));
+  });
+});
+
+describe("sumByMonth", () => {
+  describe("空の入力", () => {
+    it("取引が空なら、空配列を返す", () => {
+      expect(sumByMonth([])).toEqual([]);
+    });
+  });
+
+  describe("符号の反転（支出は負で持ち、正で返す）", () => {
+    it("支出だけの月は、expenseYen が符号を反転した正の数になる", () => {
+      const totals = sumByMonth([tx({ date: "2026-01-15", amountYen: -1200 })]);
+
+      expect(at(totals, 0).expenseYen).toBe(1200);
+    });
+
+    it("支出だけの月は、incomeYen が +0 になる（-0 にならない）", () => {
+      const totals = sumByMonth([tx({ date: "2026-01-15", amountYen: -1200 })]);
+
+      expectPlusZero(at(totals, 0).incomeYen);
+    });
+
+    it("収入だけの月は、incomeYen がそのままの正の数になる", () => {
+      const totals = sumByMonth([tx({ date: "2026-01-25", amountYen: 300000 })]);
+
+      expect(at(totals, 0).incomeYen).toBe(300000);
+    });
+
+    it("収入だけの月は、expenseYen が +0 になる（-0 にならない）", () => {
+      const totals = sumByMonth([tx({ date: "2026-01-25", amountYen: 300000 })]);
+
+      expectPlusZero(at(totals, 0).expenseYen);
+    });
+
+    it("支出と収入が混ざる月は、それぞれ別に合計する", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-01-05", amountYen: -1200 }),
+        tx({ date: "2026-01-25", amountYen: 300000 }),
+        tx({ date: "2026-01-28", amountYen: -800 }),
+      ]);
+
+      expect(totals).toEqual([{ period: "2026-01", expenseYen: 2000, incomeYen: 300000 }]);
+    });
+  });
+
+  describe("月ごとのまとめ方", () => {
+    it("同じ月の複数の取引は、1つのエントリにまとまる", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-02-01", amountYen: -100 }),
+        tx({ date: "2026-02-14", amountYen: -200 }),
+        tx({ date: "2026-02-28", amountYen: -300 }),
+      ]);
+
+      expect(totals).toEqual([{ period: "2026-02", expenseYen: 600, incomeYen: 0 }]);
+    });
+
+    it("違う月の取引は、別のエントリになる", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-01-31", amountYen: -100 }),
+        tx({ date: "2026-02-01", amountYen: -200 }),
+      ]);
+
+      expect(totals).toEqual([
+        { period: "2026-01", expenseYen: 100, incomeYen: 0 },
+        { period: "2026-02", expenseYen: 200, incomeYen: 0 },
+      ]);
+    });
+
+    it("period は YYYY-MM 形式で、日を含まない", () => {
+      const totals = sumByMonth([tx({ date: "2026-07-09", amountYen: -100 })]);
+
+      expect(at(totals, 0).period).toBe("2026-07");
+    });
+
+    it("同じ月が2つのエントリに割れない", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-03-01", amountYen: -100 }),
+        tx({ date: "2026-03-31", amountYen: 100 }),
+      ]);
+
+      expect(periodsOf(totals)).toEqual(["2026-03"]);
+    });
+  });
+
+  describe("並び順（period の昇順・入力順に依存しない）", () => {
+    it("入力が降順でも、period の昇順で返る", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-03-01", amountYen: -300 }),
+        tx({ date: "2026-01-01", amountYen: -100 }),
+        tx({ date: "2026-02-01", amountYen: -200 }),
+      ]);
+
+      expect(periodsOf(totals)).toEqual(["2026-01", "2026-02", "2026-03"]);
+    });
+
+    it("年をまたぐとき、2025-12 が 2026-01 より前に来る", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-01-05", amountYen: -100 }),
+        tx({ date: "2025-12-25", amountYen: -200 }),
+      ]);
+
+      expect(periodsOf(totals)).toEqual(["2025-12", "2026-01"]);
+    });
+
+    it("入力を逆順にしても、同じ結果になる", () => {
+      const transactions = [
+        tx({ date: "2025-11-01", amountYen: -100 }),
+        tx({ date: "2025-12-01", amountYen: 200 }),
+        tx({ date: "2026-01-01", amountYen: -300 }),
+        tx({ date: "2026-10-01", amountYen: -400 }),
+      ];
+
+      expect(sumByMonth([...transactions].reverse())).toEqual(sumByMonth(transactions));
+    });
+
+    it("2026-02 と 2026-10 を、文字列としてではなく月として正しく並べる", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-10-01", amountYen: -100 }),
+        tx({ date: "2026-02-01", amountYen: -200 }),
+      ]);
+
+      expect(periodsOf(totals)).toEqual(["2026-02", "2026-10"]);
+    });
+  });
+
+  describe("金額 0 の取引", () => {
+    it("0 円の取引だけの月も、エントリが作られる", () => {
+      const totals = sumByMonth([tx({ date: "2026-04-10", amountYen: 0 })]);
+
+      expect(periodsOf(totals)).toEqual(["2026-04"]);
+    });
+
+    it("0 円の取引は、expenseYen にも incomeYen にも数えない", () => {
+      const totals = sumByMonth([tx({ date: "2026-04-10", amountYen: 0 })]);
+
+      expect(at(totals, 0)).toEqual({ period: "2026-04", expenseYen: 0, incomeYen: 0 });
+    });
+
+    it("0 円だけの月の expenseYen は +0 になる（-0 にならない）", () => {
+      const totals = sumByMonth([tx({ date: "2026-04-10", amountYen: 0 })]);
+
+      expectPlusZero(at(totals, 0).expenseYen);
+    });
+
+    it("-0 円の取引も、支出に数えない（-0 < 0 は偽）", () => {
+      const totals = sumByMonth([tx({ date: "2026-05-10", amountYen: -0 })]);
+
+      expect(at(totals, 0)).toEqual({ period: "2026-05", expenseYen: 0, incomeYen: 0 });
+    });
+
+    it("-0 円だけの月の expenseYen は +0 になる（-0 にならない）", () => {
+      const totals = sumByMonth([tx({ date: "2026-05-10", amountYen: -0 })]);
+
+      expectPlusZero(at(totals, 0).expenseYen);
+    });
+
+    it("-0 円だけの月の incomeYen は +0 になる（-0 にならない）", () => {
+      const totals = sumByMonth([tx({ date: "2026-05-10", amountYen: -0 })]);
+
+      expectPlusZero(at(totals, 0).incomeYen);
+    });
+
+    it("0 円の取引が混ざっても、他の取引の合計を変えない", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-06-01", amountYen: -500 }),
+        tx({ date: "2026-06-02", amountYen: 0 }),
+        tx({ date: "2026-06-03", amountYen: -0 }),
+        tx({ date: "2026-06-04", amountYen: 700 }),
+      ]);
+
+      expect(totals).toEqual([{ period: "2026-06", expenseYen: 500, incomeYen: 700 }]);
+    });
+
+    it("0 円だけの月も、他の月と一緒に昇順の位置に並ぶ", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-03-01", amountYen: -100 }),
+        tx({ date: "2026-02-01", amountYen: 0 }),
+        tx({ date: "2026-01-01", amountYen: 100 }),
+      ]);
+
+      expect(totals).toEqual([
+        { period: "2026-01", expenseYen: 0, incomeYen: 100 },
+        { period: "2026-02", expenseYen: 0, incomeYen: 0 },
+        { period: "2026-03", expenseYen: 100, incomeYen: 0 },
+      ]);
+    });
+  });
+
+  describe("カテゴリや摘要には依存しない", () => {
+    it("カテゴリが違っても、同じ月なら合算される", () => {
+      const totals = sumByMonth([
+        tx({ date: "2026-01-05", amountYen: -100, category: "食費" }),
+        tx({ date: "2026-01-06", amountYen: -200, category: "交通費" }),
+        tx({ date: "2026-01-07", amountYen: -300, category: "" }),
+      ]);
+
+      expect(totals).toEqual([{ period: "2026-01", expenseYen: 600, incomeYen: 0 }]);
+    });
+  });
+});
+
+describe("sumByDay", () => {
+  describe("空の入力", () => {
+    it("取引が空なら、空配列を返す", () => {
+      expect(sumByDay([])).toEqual([]);
+    });
+  });
+
+  describe("日ごとのまとめ方", () => {
+    it("period は日付そのもの（YYYY-MM-DD）になる", () => {
+      const totals = sumByDay([tx({ date: "2026-07-09", amountYen: -100 })]);
+
+      expect(at(totals, 0).period).toBe("2026-07-09");
+    });
+
+    it("同じ日の複数の取引は、1つのエントリにまとまる", () => {
+      const totals = sumByDay([
+        tx({ date: "2026-01-15", amountYen: -100 }),
+        tx({ date: "2026-01-15", amountYen: -250 }),
+        tx({ date: "2026-01-15", amountYen: 1000 }),
+      ]);
+
+      expect(totals).toEqual([{ period: "2026-01-15", expenseYen: 350, incomeYen: 1000 }]);
+    });
+
+    it("同じ月の別の日は、別のエントリになる（月にまとめない）", () => {
+      const totals = sumByDay([
+        tx({ date: "2026-01-15", amountYen: -100 }),
+        tx({ date: "2026-01-16", amountYen: -200 }),
+      ]);
+
+      expect(totals).toEqual([
+        { period: "2026-01-15", expenseYen: 100, incomeYen: 0 },
+        { period: "2026-01-16", expenseYen: 200, incomeYen: 0 },
+      ]);
+    });
+  });
+
+  describe("符号の反転", () => {
+    it("支出は符号を反転した正の数で返る", () => {
+      const totals = sumByDay([tx({ date: "2026-01-15", amountYen: -1200 })]);
+
+      expect(at(totals, 0).expenseYen).toBe(1200);
+    });
+
+    it("収入だけの日の expenseYen は +0 になる（-0 にならない）", () => {
+      const totals = sumByDay([tx({ date: "2026-01-15", amountYen: 500 })]);
+
+      expectPlusZero(at(totals, 0).expenseYen);
+    });
+
+    it("支出だけの日の incomeYen は +0 になる（-0 にならない）", () => {
+      const totals = sumByDay([tx({ date: "2026-01-15", amountYen: -500 })]);
+
+      expectPlusZero(at(totals, 0).incomeYen);
+    });
+  });
+
+  describe("並び順（period の昇順・入力順に依存しない）", () => {
+    it("入力が降順でも、日付の昇順で返る", () => {
+      const totals = sumByDay([
+        tx({ date: "2026-01-31", amountYen: -300 }),
+        tx({ date: "2026-01-02", amountYen: -100 }),
+        tx({ date: "2026-01-09", amountYen: -200 }),
+      ]);
+
+      expect(periodsOf(totals)).toEqual(["2026-01-02", "2026-01-09", "2026-01-31"]);
+    });
+
+    it("年をまたぐとき、2025-12-31 が 2026-01-01 より前に来る", () => {
+      const totals = sumByDay([
+        tx({ date: "2026-01-01", amountYen: -100 }),
+        tx({ date: "2025-12-31", amountYen: -200 }),
+      ]);
+
+      expect(periodsOf(totals)).toEqual(["2025-12-31", "2026-01-01"]);
+    });
+
+    it("入力を逆順にしても、同じ結果になる", () => {
+      const transactions = [
+        tx({ date: "2025-12-31", amountYen: -100 }),
+        tx({ date: "2026-01-01", amountYen: 200 }),
+        tx({ date: "2026-01-01", amountYen: -300 }),
+        tx({ date: "2026-02-10", amountYen: -400 }),
+      ];
+
+      expect(sumByDay([...transactions].reverse())).toEqual(sumByDay(transactions));
+    });
+  });
+
+  describe("金額 0 の取引", () => {
+    it("0 円の取引だけの日も、エントリが作られる", () => {
+      const totals = sumByDay([tx({ date: "2026-04-10", amountYen: 0 })]);
+
+      expect(totals).toEqual([{ period: "2026-04-10", expenseYen: 0, incomeYen: 0 }]);
+    });
+
+    it("-0 円の取引も、支出に数えない", () => {
+      const totals = sumByDay([tx({ date: "2026-04-10", amountYen: -0 })]);
+
+      expect(totals).toEqual([{ period: "2026-04-10", expenseYen: 0, incomeYen: 0 }]);
+    });
+
+    it("-0 円だけの日の expenseYen は +0 になる（-0 にならない）", () => {
+      const totals = sumByDay([tx({ date: "2026-04-10", amountYen: -0 })]);
+
+      expectPlusZero(at(totals, 0).expenseYen);
+    });
+
+    it("0 円の取引が混ざっても、その日の合計を変えない", () => {
+      const totals = sumByDay([
+        tx({ date: "2026-04-10", amountYen: -500 }),
+        tx({ date: "2026-04-10", amountYen: 0 }),
+        tx({ date: "2026-04-10", amountYen: -0 }),
+      ]);
+
+      expect(totals).toEqual([{ period: "2026-04-10", expenseYen: 500, incomeYen: 0 }]);
+    });
+  });
+
+  describe("sumByMonth との整合", () => {
+    it("同じ入力なら、日次の合計を月ごとに足した額が月次の合計と一致する", () => {
+      const transactions = [
+        tx({ date: "2026-01-05", amountYen: -100 }),
+        tx({ date: "2026-01-05", amountYen: 400 }),
+        tx({ date: "2026-01-20", amountYen: -250 }),
+        tx({ date: "2026-02-01", amountYen: -700 }),
+      ];
+
+      const januaryDays = sumByDay(transactions).filter((total) =>
+        total.period.startsWith("2026-01"),
+      );
+      const januaryExpense = januaryDays.reduce((sum, total) => sum + total.expenseYen, 0);
+      const januaryIncome = januaryDays.reduce((sum, total) => sum + total.incomeYen, 0);
+      const january = totalOf(sumByMonth(transactions), "2026-01");
+
+      expect({ expenseYen: januaryExpense, incomeYen: januaryIncome }).toEqual({
+        expenseYen: january.expenseYen,
+        incomeYen: january.incomeYen,
+      });
+    });
+  });
+});
+
+describe("sumByCategory", () => {
+  describe("空の結果になる入力", () => {
+    it("取引が空なら、空配列を返す", () => {
+      expect(sumByCategory([])).toEqual([]);
+    });
+
+    it("収入しか無いなら、空配列を返す", () => {
+      expect(
+        sumByCategory([
+          tx({ amountYen: 300000, category: "給与" }),
+          tx({ amountYen: 5000, category: "その他収入" }),
+        ]),
+      ).toEqual([]);
+    });
+
+    it("0 円の取引しか無いなら、空配列を返す", () => {
+      expect(sumByCategory([tx({ amountYen: 0, category: "食費" })])).toEqual([]);
+    });
+
+    it("-0 円の取引しか無いなら、空配列を返す（-0 >= 0 は真）", () => {
+      expect(sumByCategory([tx({ amountYen: -0, category: "食費" })])).toEqual([]);
+    });
+  });
+
+  describe("支出だけを、正の数で合計する", () => {
+    it("支出は符号を反転した正の数になる", () => {
+      expect(sumByCategory([tx({ amountYen: -1200, category: "食費" })])).toEqual([
+        { category: "食費", expenseYen: 1200 },
+      ]);
+    });
+
+    it("同じカテゴリの複数の支出は、1つにまとまる", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -100, category: "食費" }),
+        tx({ amountYen: -200, category: "食費" }),
+      ]);
+
+      expect(totals).toEqual([{ category: "食費", expenseYen: 300 }]);
+    });
+
+    it("同じカテゴリの収入は、支出から差し引かれない", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -1000, category: "食費" }),
+        tx({ amountYen: 400, category: "食費" }),
+      ]);
+
+      expect(totals).toEqual([{ category: "食費", expenseYen: 1000 }]);
+    });
+
+    it("収入しか無いカテゴリは、結果に現れない", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -1000, category: "食費" }),
+        tx({ amountYen: 300000, category: "給与" }),
+      ]);
+
+      expect(categoriesOf(totals)).toEqual(["食費"]);
+    });
+
+    it("0 円の取引しか無いカテゴリは、結果に現れない", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -1000, category: "食費" }),
+        tx({ amountYen: 0, category: "交通費" }),
+        tx({ amountYen: -0, category: "日用品" }),
+      ]);
+
+      expect(categoriesOf(totals)).toEqual(["食費"]);
+    });
+  });
+
+  describe("並び順（expenseYen の降順）", () => {
+    it("金額の大きいカテゴリが先に来る", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -100, category: "交通費" }),
+        tx({ amountYen: -3000, category: "住居費" }),
+        tx({ amountYen: -500, category: "食費" }),
+      ]);
+
+      expect(totals).toEqual([
+        { category: "住居費", expenseYen: 3000 },
+        { category: "食費", expenseYen: 500 },
+        { category: "交通費", expenseYen: 100 },
+      ]);
+    });
+
+    it("合算後の金額で比較する（1件あたりの金額では並べない）", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -900, category: "住居費" }),
+        tx({ amountYen: -500, category: "食費" }),
+        tx({ amountYen: -500, category: "食費" }),
+      ]);
+
+      expect(categoriesOf(totals)).toEqual(["食費", "住居費"]);
+    });
+  });
+
+  describe("同額のときの並び順（category の昇順・入力順に依存しない）", () => {
+    it("同額のカテゴリは、category の昇順で並ぶ", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -1000, category: "C" }),
+        tx({ amountYen: -1000, category: "A" }),
+        tx({ amountYen: -1000, category: "B" }),
+      ]);
+
+      expect(categoriesOf(totals)).toEqual(["A", "B", "C"]);
+    });
+
+    it("入力順を変えても、同額のカテゴリの並びは変わらない", () => {
+      const order1 = sumByCategory([
+        tx({ amountYen: -1000, category: "A" }),
+        tx({ amountYen: -1000, category: "B" }),
+        tx({ amountYen: -2000, category: "Z" }),
+      ]);
+      const order2 = sumByCategory([
+        tx({ amountYen: -1000, category: "B" }),
+        tx({ amountYen: -2000, category: "Z" }),
+        tx({ amountYen: -1000, category: "A" }),
+      ]);
+
+      expect(categoriesOf(order2)).toEqual(categoriesOf(order1));
+    });
+
+    it("同額のカテゴリより、金額の大きいカテゴリが先に来る", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -1000, category: "A" }),
+        tx({ amountYen: -1000, category: "B" }),
+        tx({ amountYen: -2000, category: "Z" }),
+      ]);
+
+      expect(categoriesOf(totals)).toEqual(["Z", "A", "B"]);
+    });
+
+    it("日本語のカテゴリでも、同額なら category の昇順で並ぶ", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -1000, category: "食費" }),
+        tx({ amountYen: -1000, category: "交通費" }),
+      ]);
+
+      expect(categoriesOf(totals)).toEqual(["交通費", "食費"]);
+    });
+  });
+
+  describe("空文字列のカテゴリ", () => {
+    it("category が空文字列の支出は、未分類として集計される", () => {
+      const totals = sumByCategory([tx({ amountYen: -800, category: "" })]);
+
+      expect(totals).toEqual([{ category: UNCATEGORIZED, expenseYen: 800 }]);
+    });
+
+    it("UNCATEGORIZED は「未分類」である", () => {
+      expect(UNCATEGORIZED).toBe("未分類");
+    });
+
+    it("空文字列と「未分類」の取引は、同じエントリにまとまる", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -300, category: "" }),
+        tx({ amountYen: -700, category: UNCATEGORIZED }),
+      ]);
+
+      expect(totals).toEqual([{ category: UNCATEGORIZED, expenseYen: 1000 }]);
+    });
+
+    it("空文字列のカテゴリは、結果に空文字列として現れない", () => {
+      const totals = sumByCategory([tx({ amountYen: -800, category: "" })]);
+
+      expect(categoriesOf(totals)).not.toContain("");
+    });
+
+    it("空文字列のカテゴリも、他のカテゴリと同じ規則で並ぶ", () => {
+      const totals = sumByCategory([
+        tx({ amountYen: -100, category: "食費" }),
+        tx({ amountYen: -900, category: "" }),
+      ]);
+
+      expect(totals).toEqual([
+        { category: UNCATEGORIZED, expenseYen: 900 },
+        { category: "食費", expenseYen: 100 },
+      ]);
+    });
+  });
+});
+
+describe("inMonth", () => {
+  describe("絞り込み", () => {
+    it("指定した月の取引だけを返す", () => {
+      const transactions = [
+        tx({ id: "a", date: "2026-01-05" }),
+        tx({ id: "b", date: "2026-02-05" }),
+        tx({ id: "c", date: "2026-01-25" }),
+      ];
+
+      expect(inMonth(transactions, "2026-01").map((t) => t.id)).toEqual(["a", "c"]);
+    });
+
+    it("月初の取引を含む", () => {
+      const transactions = [tx({ id: "a", date: "2026-01-01" })];
+
+      expect(inMonth(transactions, "2026-01")).toEqual(transactions);
+    });
+
+    it("月末の取引を含む", () => {
+      const transactions = [tx({ id: "a", date: "2026-01-31" })];
+
+      expect(inMonth(transactions, "2026-01")).toEqual(transactions);
+    });
+
+    it("前月末の取引を含まない", () => {
+      expect(inMonth([tx({ date: "2025-12-31" })], "2026-01")).toEqual([]);
+    });
+
+    it("翌月初の取引を含まない", () => {
+      expect(inMonth([tx({ date: "2026-02-01" })], "2026-01")).toEqual([]);
+    });
+
+    it("年が違えば、同じ月でも含まない", () => {
+      expect(inMonth([tx({ date: "2025-01-15" })], "2026-01")).toEqual([]);
+    });
+
+    it("入力の順序を保つ（日付順に並べ替えない）", () => {
+      const transactions = [
+        tx({ id: "c", date: "2026-01-25" }),
+        tx({ id: "a", date: "2026-01-05" }),
+        tx({ id: "b", date: "2026-01-15" }),
+      ];
+
+      expect(inMonth(transactions, "2026-01").map((t) => t.id)).toEqual(["c", "a", "b"]);
+    });
+
+    it("金額やカテゴリでは絞り込まない（0 円・収入も含む）", () => {
+      const transactions = [
+        tx({ id: "a", date: "2026-01-05", amountYen: 0 }),
+        tx({ id: "b", date: "2026-01-06", amountYen: 500 }),
+        tx({ id: "c", date: "2026-01-07", amountYen: -500, category: "" }),
+      ];
+
+      expect(inMonth(transactions, "2026-01")).toEqual(transactions);
+    });
+  });
+
+  describe("該当なし", () => {
+    it("取引が空なら、空配列を返す", () => {
+      expect(inMonth([], "2026-01")).toEqual([]);
+    });
+
+    it("その月の取引が1件も無ければ、空配列を返す", () => {
+      expect(inMonth([tx({ date: "2026-03-15" })], "2026-01")).toEqual([]);
+    });
+
+    it("month が空文字列なら、どの取引も該当しない", () => {
+      expect(inMonth([tx({ date: "2026-01-15" })], "")).toEqual([]);
+    });
+
+    it("month が年だけ（YYYY）なら、どの取引も該当しない", () => {
+      expect(inMonth([tx({ date: "2026-01-15" })], "2026")).toEqual([]);
+    });
+
+    it("month が日付（YYYY-MM-DD）なら、どの取引も該当しない", () => {
+      expect(inMonth([tx({ date: "2026-01-15" })], "2026-01-15")).toEqual([]);
+    });
+  });
+
+  describe("sumByMonth との整合", () => {
+    it("inMonth で絞った取引の月次集計は、全体の月次集計のその月と一致する", () => {
+      const transactions = [
+        tx({ date: "2026-01-05", amountYen: -100 }),
+        tx({ date: "2025-12-31", amountYen: -9999 }),
+        tx({ date: "2026-01-20", amountYen: 4000 }),
+        tx({ date: "2026-02-01", amountYen: -700 }),
+      ];
+
+      expect(sumByMonth(inMonth(transactions, "2026-01"))).toEqual([
+        totalOf(sumByMonth(transactions), "2026-01"),
+      ]);
+    });
+  });
+});
+
+describe("引数の配列を書き換えない", () => {
+  const transactions = (): StoredTransaction[] => [
+    tx({ date: "2026-03-01", amountYen: -300, category: "食費" }),
+    tx({ date: "2026-01-31", amountYen: 1000, category: "" }),
+    tx({ date: "2026-02-15", amountYen: -100, category: "交通費" }),
+  ];
+
+  it("sumByMonth は入力を書き換えない", () => {
+    expectInputUnchanged(transactions(), (input) => sumByMonth(input));
+  });
+
+  it("sumByDay は入力を書き換えない", () => {
+    expectInputUnchanged(transactions(), (input) => sumByDay(input));
+  });
+
+  it("sumByCategory は入力を書き換えない", () => {
+    expectInputUnchanged(transactions(), (input) => sumByCategory(input));
+  });
+
+  it("inMonth は入力を書き換えない", () => {
+    expectInputUnchanged(transactions(), (input) => inMonth(input, "2026-02"));
+  });
+
+  it("inMonth は全件が該当する場合でも、入力の配列そのものを返さない", () => {
+    const input = transactions().map((t) => ({ ...t, date: "2026-02-15" }));
+
+    expect(inMonth(input, "2026-02")).not.toBe(input);
+  });
+});
+
+describe("negateExpense", () => {
+  // 集計は支出を正の数で持ち、画面は符号付きで出したい。単純に `-x` と書くと
+  // 支出0の月（収入だけの月は普通にある）で -0 になり、-￥0 と表示される。
+  it("0 を渡すと +0 が返る（-0 ではない）", () => {
+    expect(Object.is(negateExpense(0), 0)).toBe(true);
+  });
+
+  it("-0 を渡しても +0 が返る", () => {
+    expect(Object.is(negateExpense(-0), 0)).toBe(true);
+  });
+
+  it("+0 の戻り値は Intl.NumberFormat で -￥0 にならない", () => {
+    const yen = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY" });
+    expect(yen.format(negateExpense(0))).not.toContain("-");
+  });
+
+  it.each([
+    [1, -1],
+    [42202, -42202],
+    [Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER],
+  ])("正の支出 %i は %i になる", (input, expected) => {
+    expect(negateExpense(input)).toBe(expected);
+  });
+
+  it("2回かけると元に戻る（0以外）", () => {
+    expect(negateExpense(negateExpense(1500))).toBe(1500);
+  });
+
+  it("支出ゼロの月の合計を反転しても -0 にならない", () => {
+    const incomeOnly: StoredTransaction[] = [
+      tx({ date: "2026-08-01", amountYen: 250000 }),
+    ];
+    const total = at(sumByMonth(incomeOnly), 0);
+    expectPlusZero(negateExpense(total.expenseYen));
+  });
+});
