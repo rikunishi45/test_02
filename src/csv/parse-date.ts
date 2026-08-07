@@ -1,21 +1,10 @@
+import { daysInMonth } from "../domain/date-parts.js";
+
 const PATTERNS = [
   /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/,
   /^(\d{4})-(\d{1,2})-(\d{1,2})$/,
   /^(\d{4})年(\d{1,2})月(\d{1,2})日$/,
 ];
-
-const MONTHS_WITH_30_DAYS = [4, 6, 9, 11];
-
-function isLeapYear(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
-function daysInMonth(year: number, month: number): number {
-  if (month === 2) {
-    return isLeapYear(year) ? 29 : 28;
-  }
-  return MONTHS_WITH_30_DAYS.includes(month) ? 30 : 31;
-}
 
 /**
  * 日付文字列を YYYY-MM-DD に正規化する。
