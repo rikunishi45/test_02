@@ -11,6 +11,18 @@ paths:
 - 実行は `run-tests.sh` を正とする（`npm ci` → `tsc --noEmit` → `vitest run --coverage`
   → `stryker run`）。しきい値は `vitest.config.ts` / `stryker.config.mjs`
   （いずれも保護パス）で固定してあり、AIは下げられない
+- **数値の符号を反転する箇所では `-0` を疑う。** `-0 < 0` は偽なので範囲チェックを
+  素通りし、`Intl.NumberFormat` は `-￥0` と表示する。
+  `Object.is` の向きに注意する。**テストで「結果が `+0` であること」を主張するのは
+  `Object.is(value, 0)`**（`toBe(0)` も同じ判定なので `-0` で落ちる）。一方、
+  **コード側で `-0` を潰すガードに `Object.is(value, 0)` を使うと逆になる**
+  （`Object.is(-0, 0)` は偽なので `-0` が素通りする）。潰すなら `value === 0 ? 0 : value`
+  のように `===`（`-0 === 0` は真）で正規化するか、`Object.is(value, -0)` を見る。
+  このプロジェクトで4回出ている：`parse-amount.ts` の符号解釈、取り込み時の
+  `invertAmount` による反転、`bar-chart.ts` の棒の高さ（`負の値 × scale 0`）、
+  集計結果を画面で符号付きに戻す箇所。**4回目は、集計側で `-0` を混ぜないよう
+  書いた直後に表示側で反転して復活させたもの。** 防御は層をまたぐと破れるので、
+  反転の判定自体を壁の中の関数に閉じる（`negateExpense` がその形）。
 - Stryker が報告する生存ミュータントのうち、エラーメッセージ文字列の変異や、
   境界値で元の実装と観測可能な違いが出ない同値ミュータントは、無理に潰そうとしない
   （`clamp-number.ts` の `value < min` ↔ `value <= min` がその例：`value === min`
