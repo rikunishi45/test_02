@@ -4,7 +4,7 @@ import {
   type CashEntryError,
   type CashEntryField,
 } from "../cash/manual-entry.js";
-import { classifyDescription, UNCATEGORIZED, type LearnedCategories } from "../category/classify.js";
+import { classifyDescription, type LearnedCategories } from "../category/classify.js";
 import { CATEGORIES, DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { toIsoDate } from "../domain/date-parts.js";
 import { putTransactions, setLearnedCategory } from "../storage/db.js";
@@ -59,19 +59,32 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
       };
       await putTransactions(db, [stored]);
 
-      // 明示的に選んだカテゴリは摘要ごとの学習として覚える。取引の category に
-      // 書くだけでは、次の再読み込みで reclassifyTransactions がルール側の
-      // 判定に戻してしまう。
-      if (category !== AUTO) {
-        await setLearnedCategory(db, result.transaction.description, category);
-      }
-
       setMessage(`${result.transaction.description} を登録しました。`);
       // 日付は残す。同じ日の分を続けて入れることが多い。
       setAmount("");
       setDescription("");
       setCategory(AUTO);
       onSaved();
+
+      // 明示的に選んだカテゴリは摘要ごとの学習として覚える。取引の category に
+      // 書くだけでは、次の再読み込みで reclassifyTransactions がルール側の
+      // 判定に戻してしまう。
+      //
+      // **取引の保存とは別に扱う。** 同じ try に入れてまとめて失敗を報告すると、
+      // 取引は保存済みなのに「登録できませんでした」と出る。人間は再試行し、
+      // 別のIDで同じ支出がもう1件入る——個別削除の経路が無いので、これは
+      // バックアップからの全復元でしか消せない。学習の失敗は一覧から選び直せば
+      // 回復できるので、そう案内して登録の成功はそのまま残す。
+      if (category !== AUTO) {
+        try {
+          await setLearnedCategory(db, result.transaction.description, category);
+        } catch (error) {
+          setMessage(
+            `${result.transaction.description} を登録しました。` +
+              `カテゴリは覚えられませんでした（一覧から選び直してください）: ${String(error)}`,
+          );
+        }
+      }
     } catch (error) {
       setMessage(`登録できませんでした: ${String(error)}`);
     } finally {
@@ -114,9 +127,13 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
         </Field>
 
         <Field label="カテゴリ">
+          {/*
+            「未分類」は選択肢に出さない。setLearnedCategory は UNCATEGORIZED を
+            渡すと学習を消す仕様なので、選んでもルール判定に戻るだけで、明示的な
+            選択が黙って捨てられる。ルールに任せる意味は「自動」が既に持っている。
+          */}
           <select value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value={AUTO}>自動（摘要から判定）</option>
-            <option value={UNCATEGORIZED}>{UNCATEGORIZED}</option>
             {CATEGORIES.map((c) => (
               <option key={c} value={c}>
                 {c}
