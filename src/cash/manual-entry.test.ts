@@ -4,6 +4,7 @@ import type {
   CashEntryError,
   CashEntryField,
   CashEntryInput,
+  CashEntryKind,
   CashEntryResult,
 } from "./manual-entry.js";
 import type { Transaction } from "../domain/transaction.js";
@@ -13,6 +14,7 @@ const inputOf = (overrides: Partial<CashEntryInput> = {}): CashEntryInput => ({
   date: "2026-08-09",
   amount: "1200",
   description: "コンビニ",
+  kind: "expense",
   ...overrides,
 });
 
@@ -45,6 +47,7 @@ describe("buildCashTransaction", () => {
         date: "2026/8/9",
         amount: "¥1,200",
         description: " コンビニ ",
+        kind: "expense",
       });
 
       expect(expectSuccess(result)).toEqual({
@@ -60,6 +63,7 @@ describe("buildCashTransaction", () => {
         date: "2026年8月9日",
         amount: "1,200円",
         description: "ランチ",
+        kind: "expense",
       });
 
       expect(expectSuccess(result)).toEqual({
@@ -102,6 +106,7 @@ describe("buildCashTransaction", () => {
         date: "2026年1月1日",
         amount: "¥9,999円",
         description: "初詣",
+        kind: "expense",
       });
 
       expect(expectSuccess(result).source).toBe("cash");
@@ -545,6 +550,7 @@ describe("buildCashTransaction", () => {
         date: "2026/2/30",
         amount: "-0",
         description: "   ",
+        kind: "expense",
       });
 
       expect(failedFields(result)).toEqual(["amount", "date", "description"]);
@@ -596,7 +602,7 @@ describe("buildCashTransaction", () => {
 
     it("各エラーの message は空でない文字列である（文言そのものは検査しない）", () => {
       const errors = expectFailure(
-        buildCashTransaction({ date: "x", amount: "y", description: "" }),
+        buildCashTransaction({ date: "x", amount: "y", description: "", kind: "expense" }),
       );
 
       expect(errors.every((e) => typeof e.message === "string" && e.message.length > 0)).toBe(true);
@@ -604,14 +610,14 @@ describe("buildCashTransaction", () => {
 
     it("どんな不正入力でも例外を投げず、結果として返す", () => {
       expect(() =>
-        buildCashTransaction({ date: "", amount: "", description: "" }),
+        buildCashTransaction({ date: "", amount: "", description: "", kind: "expense" }),
       ).not.toThrow();
     });
   });
 
   describe("入力を書き換えないこと", () => {
     it("成功したとき、渡した input オブジェクトを書き換えない", () => {
-      const input = { date: " 2026/8/9 ", amount: " ¥1,200円 ", description: " コンビニ " };
+      const input = { date: " 2026/8/9 ", amount: " ¥1,200円 ", description: " コンビニ ", kind: "expense" as const };
       const snapshot = { ...input };
 
       buildCashTransaction(input);
@@ -620,7 +626,7 @@ describe("buildCashTransaction", () => {
     });
 
     it("失敗したとき、渡した input オブジェクトを書き換えない", () => {
-      const input = { date: "2026/2/30", amount: "-0", description: "  " };
+      const input = { date: "2026/2/30", amount: "-0", description: "  ", kind: "expense" as const };
       const snapshot = { ...input };
 
       buildCashTransaction(input);
@@ -632,6 +638,285 @@ describe("buildCashTransaction", () => {
       const input = inputOf({ date: "2026年8月9日", amount: "¥1,200円" });
 
       expect(buildCashTransaction(input)).toEqual(buildCashTransaction(input));
+    });
+  });
+
+  describe('収入（kind: "income"）', () => {
+    /** 既定の有効な入力を収入にしたもの。検査したい項目だけ差し替える */
+    const incomeInputOf = (overrides: Partial<CashEntryInput> = {}): CashEntryInput =>
+      inputOf({ kind: "income", ...overrides });
+
+    describe("符号", () => {
+      it("正の整数を正の amountYen にする", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ amount: "1200" }))).amountYen,
+        ).toBe(1200);
+      });
+
+      it("有効な入力から Transaction を組み立てる", () => {
+        const result = buildCashTransaction({
+          date: "2026/8/9",
+          amount: "¥1,200",
+          description: " 給与 ",
+          kind: "income",
+        });
+
+        expect(expectSuccess(result)).toEqual({
+          date: "2026-08-09",
+          amountYen: 1200,
+          description: "給与",
+          source: "cash",
+        });
+      });
+
+      it("amountYen は必ず正である（収入を正で表す元帳の慣習）", () => {
+        const transaction = expectSuccess(buildCashTransaction(incomeInputOf({ amount: "1" })));
+
+        expect(transaction.amountYen).toBeGreaterThan(0);
+      });
+
+      it("最小の有効値 1 を受け付け、1 にする", () => {
+        expect(expectSuccess(buildCashTransaction(incomeInputOf({ amount: "1" }))).amountYen).toBe(
+          1,
+        );
+      });
+
+      it("amountYen は整数である", () => {
+        const transaction = expectSuccess(
+          buildCashTransaction(incomeInputOf({ amount: "¥1,200円" })),
+        );
+
+        expect(Number.isInteger(transaction.amountYen)).toBe(true);
+      });
+    });
+
+    describe("kind による差", () => {
+      const base = { date: "2026/8/9", amount: "¥1,200円", description: " コンビニ " };
+
+      it("kind を変えると amountYen の符号だけが反転する", () => {
+        const expense = expectSuccess(buildCashTransaction({ ...base, kind: "expense" }));
+        const income = expectSuccess(buildCashTransaction({ ...base, kind: "income" }));
+
+        expect(expense.amountYen).toBe(-1200);
+        expect(income.amountYen).toBe(1200);
+      });
+
+      it("kind を変えても date / description / source は同一である", () => {
+        const expense = expectSuccess(buildCashTransaction({ ...base, kind: "expense" }));
+        const income = expectSuccess(buildCashTransaction({ ...base, kind: "income" }));
+
+        expect(income.date).toBe(expense.date);
+        expect(income.description).toBe(expense.description);
+        expect(income.source).toBe(expense.source);
+      });
+
+      it("kind で変わるのは amountYen だけで、キーの構成は変わらない", () => {
+        const expense = expectSuccess(buildCashTransaction({ ...base, kind: "expense" }));
+        const income = expectSuccess(buildCashTransaction({ ...base, kind: "income" }));
+
+        expect({ ...income, amountYen: 0 }).toEqual({ ...expense, amountYen: 0 });
+      });
+    });
+
+    describe("source", () => {
+      it("収入でも source は cash である（現金収入）", () => {
+        expect(expectSuccess(buildCashTransaction(incomeInputOf())).source).toBe("cash");
+      });
+
+      it("入力が変わっても収入の source は cash のままである", () => {
+        const result = buildCashTransaction({
+          date: "2026年1月1日",
+          amount: "¥9,999円",
+          description: "お年玉",
+          kind: "income",
+        });
+
+        expect(expectSuccess(result).source).toBe("cash");
+      });
+    });
+
+    describe("収入でも受け付ける表記", () => {
+      it("カンマ区切りを読む", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ amount: "1,200" }))).amountYen,
+        ).toBe(1200);
+      });
+
+      it("半角風の ¥ を許容する", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ amount: "¥1,200" }))).amountYen,
+        ).toBe(1200);
+      });
+
+      it("全角の ￥ を許容する", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ amount: "￥1,200" }))).amountYen,
+        ).toBe(1200);
+      });
+
+      it("末尾の 円 を許容する", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ amount: "1,200円" }))).amountYen,
+        ).toBe(1200);
+      });
+
+      it("前後の空白を無視する", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ amount: "  ¥1,200円  " }))).amountYen,
+        ).toBe(1200);
+      });
+
+      it("日付を YYYY-MM-DD に正規化する", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ date: "2026年8月9日" }))).date,
+        ).toBe("2026-08-09");
+      });
+
+      it("摘要の前後の空白を落とす", () => {
+        expect(
+          expectSuccess(buildCashTransaction(incomeInputOf({ description: "  給与  " })))
+            .description,
+        ).toBe("給与");
+      });
+    });
+
+    describe("収入でも変わらない拒否", () => {
+      it('"0" はエラーになる（受理域を向きによって変えないため）', () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ amount: "0" })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it('"-0" はエラーになる', () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ amount: "-0" })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it("通貨記号付きの 0 もエラーになる", () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ amount: "¥0円" })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it('"-500" はエラーになる（符号を決めるのは kind であり入力側ではない）', () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ amount: "-500" })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it("通貨記号付きの負の数もエラーになる", () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ amount: "¥-1,200" })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it("符号を外した同じ値は成功する（負数ケースとの対）", () => {
+        expect(expectSuccess(buildCashTransaction(incomeInputOf({ amount: "500" }))).amountYen).toBe(
+          500,
+        );
+      });
+
+      it("小数はエラーになる", () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ amount: "1.5" })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it("金額が空文字列のときエラーになる", () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ amount: "" })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it("実在しない日付はエラーになる", () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ date: "2026/2/30" })))).toEqual([
+          "date",
+        ]);
+      });
+
+      it("摘要が半角スペースだけのときエラーになる", () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ description: "   " })))).toEqual([
+          "description",
+        ]);
+      });
+
+      it("摘要が全角スペースだけのときエラーになる", () => {
+        expect(failedFields(buildCashTransaction(incomeInputOf({ description: "　" })))).toEqual([
+          "description",
+        ]);
+      });
+
+      it("3項目とも不正なとき、収入でもエラーをまとめて返す", () => {
+        const result = buildCashTransaction({
+          date: "2026/2/30",
+          amount: "-0",
+          description: "   ",
+          kind: "income",
+        });
+
+        expect(failedFields(result)).toEqual(["amount", "date", "description"]);
+      });
+    });
+
+    describe("収入の金額が -0 にならないこと", () => {
+      it("成功した Transaction の amountYen が -0 になることはない", () => {
+        // 収入は「反転しない」向きだが、反転処理を共通化すると二重反転で -0 が戻る。
+        // toBe は Object.is 基準なので -0 と 0 を区別する。
+        const transaction = expectSuccess(buildCashTransaction(incomeInputOf({ amount: "1" })));
+
+        expect(Object.is(transaction.amountYen, -0)).toBe(false);
+      });
+    });
+
+    describe("収入の金額の境界", () => {
+      it("安全整数の上限そのものを、正のまま受け付ける", () => {
+        const transaction = expectSuccess(
+          buildCashTransaction(incomeInputOf({ amount: "9007199254740991" })),
+        );
+
+        expect(transaction.amountYen).toBe(Number.MAX_SAFE_INTEGER);
+      });
+
+      it("安全整数の上限を1つ超えるとき、黙って丸めずエラーになる", () => {
+        expect(
+          failedFields(buildCashTransaction(incomeInputOf({ amount: "9007199254740992" }))),
+        ).toEqual(["amount"]);
+      });
+    });
+
+    describe("kind によらず同じであること", () => {
+      const bothKinds: readonly CashEntryKind[] = ["expense", "income"];
+
+      it.each(bothKinds)("kind=%s のとき source は cash である", (kind) => {
+        expect(expectSuccess(buildCashTransaction(inputOf({ kind }))).source).toBe("cash");
+      });
+
+      it.each(bothKinds)("kind=%s のとき 0 は amount のエラーになる", (kind) => {
+        expect(failedFields(buildCashTransaction(inputOf({ amount: "0", kind })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it.each(bothKinds)("kind=%s のとき負の入力は amount のエラーになる", (kind) => {
+        expect(failedFields(buildCashTransaction(inputOf({ amount: "-500", kind })))).toEqual([
+          "amount",
+        ]);
+      });
+
+      it.each(bothKinds)("kind=%s のとき kind 自体のエラーは返らない", (kind) => {
+        const result = buildCashTransaction(inputOf({ date: "きのう", amount: "abc", kind }));
+
+        expect(failedFields(result)).toEqual(["amount", "date"]);
+      });
+
+      it.each(bothKinds)("kind=%s のとき amountYen の絶対値は入力の大きさに等しい", (kind) => {
+        const transaction = expectSuccess(
+          buildCashTransaction(inputOf({ amount: "1,234,567", kind })),
+        );
+
+        expect(Math.abs(transaction.amountYen)).toBe(1234567);
+      });
     });
   });
 });

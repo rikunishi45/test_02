@@ -9,11 +9,14 @@ export interface CashEntryError {
   message: string;
 }
 
+export type CashEntryKind = "expense" | "income";
+
 export interface CashEntryInput {
   date: string;
-  /** 支出額。正の数で受け取り、符号はここで付ける */
+  /** 金額の**大きさ**。正の数で受け取り、符号は `kind` から決める */
   amount: string;
   description: string;
+  kind: CashEntryKind;
 }
 
 export type CashEntryResult =
@@ -21,16 +24,18 @@ export type CashEntryResult =
   | { ok: false; errors: CashEntryError[] };
 
 /**
- * 手入力の1件を検証して `Transaction` に組み立てる。CSVに現れない現金の支出用。
+ * 手入力の1件を検証して `Transaction` に組み立てる。CSVに現れない現金の
+ * 支出と収入用。
  *
  * **検証をここに置く（画面に置かない）。** 日付と金額は取り込みと同じ
  * `parseDate` / `parseAmount` を通す。手入力だけ別の解釈をすると、同じ
  * `"2026/2/30"` がCSVでは弾かれ手入力では通る、といった食い違いが起きる。
  *
- * **金額は正の数だけを受ける。** 収入は扱わない（CSVに現れない現金の支出を
- * 足すのが目的）。負の数を素通しすると、符号を反転して「支出が負」に揃える
- * この関数の役割と入力の意味が二重になる。0 を弾くのは反転で `-0` を作らない
- * ため（`-0 < 0` は偽なので後段の範囲チェックを素通りする）。
+ * **金額は大きさだけを受け、符号は `kind` から決める。** 支出が負・収入が正と
+ * いう元帳の慣習（`domain/transaction.ts`）を入力欄に持ち込ませない。入力側でも
+ * 符号を付けられると「支出として -500」の意味が二重になり、どちらを優先するかを
+ * 決める分岐がここに増える。`0` を弾くのは反転で `-0` を作らないため
+ * （`-0 < 0` は偽なので後段の範囲チェックを素通りする）。
  *
  * 最初の失敗で止めずに全項目を検証する。3つ直すのに3回送信させないため。
  */
@@ -48,9 +53,9 @@ export function buildCashTransaction(input: CashEntryInput): CashEntryResult {
   try {
     const amount = parseAmount(input.amount);
     if (amount <= 0) {
-      errors.push({ field: "amount", message: "支出額を1円以上の正の数で入力してください" });
+      errors.push({ field: "amount", message: "金額は1円以上の正の数で入力してください" });
     } else {
-      amountYen = -amount;
+      amountYen = input.kind === "expense" ? -amount : amount;
     }
   } catch (error) {
     errors.push({ field: "amount", message: String(error) });

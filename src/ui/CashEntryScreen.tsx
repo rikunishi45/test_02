@@ -3,6 +3,7 @@ import {
   buildCashTransaction,
   type CashEntryError,
   type CashEntryField,
+  type CashEntryKind,
 } from "../cash/manual-entry.js";
 import { classifyDescription, type LearnedCategories } from "../category/classify.js";
 import { CATEGORIES, DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
@@ -13,6 +14,11 @@ import type { StoredTransaction } from "../storage/schema.js";
 /** カテゴリ欄の「自動」。摘要からの分類に任せる */
 const AUTO = "";
 
+const KINDS: readonly (readonly [CashEntryKind, string])[] = [
+  ["expense", "支出"],
+  ["income", "収入"],
+];
+
 interface Props {
   db: IDBDatabase;
   learned: LearnedCategories;
@@ -20,6 +26,7 @@ interface Props {
 }
 
 export function CashEntryScreen({ db, learned, onSaved }: Props) {
+  const [kind, setKind] = useState<CashEntryKind>("expense");
   const [date, setDate] = useState(() => toIsoDate(new Date()));
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -34,7 +41,7 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
 
   async function save() {
     // 検証は壁の中。画面は結果を出し分けるだけ。
-    const result = buildCashTransaction({ date, amount, description });
+    const result = buildCashTransaction({ date, amount, description, kind });
     if (!result.ok) {
       setErrors(result.errors);
       setMessage("");
@@ -75,7 +82,12 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
       // 別のIDで同じ支出がもう1件入る——個別削除の経路が無いので、これは
       // バックアップからの全復元でしか消せない。学習の失敗は一覧から選び直せば
       // 回復できるので、そう案内して登録の成功はそのまま残す。
-      if (category !== AUTO) {
+      //
+      // 収入では学習しない。カテゴリ欄は収入のとき出していないので `category` は
+      // AUTO のままだが、支出で選んだ値が残ったまま収入に切り替える経路がある。
+      // 学習は摘要ごと（符号を持たない）なので、そこで覚えると同じ摘要の**支出**
+      // まで巻き込む。
+      if (kind === "expense" && category !== AUTO) {
         try {
           await setLearnedCategory(db, result.transaction.description, category);
         } catch (error) {
@@ -94,7 +106,7 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
 
   return (
     <section>
-      <p style={styles.lead}>CSVに現れない現金の支出を手で足します。</p>
+      <p style={styles.lead}>CSVに現れない現金の支出と収入を手で足します。</p>
 
       {message !== "" && <p style={styles.message}>{message}</p>}
 
@@ -105,6 +117,22 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
           void save();
         }}
       >
+        <Field label="種別">
+          <span style={styles.kinds}>
+            {KINDS.map(([value, label]) => (
+              <label key={value} style={styles.kind}>
+                <input
+                  type="radio"
+                  name="kind"
+                  checked={kind === value}
+                  onChange={() => setKind(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </span>
+        </Field>
+
         <Field label="日付" error={errorFor("date")}>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
@@ -126,6 +154,12 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
           />
         </Field>
 
+        {/*
+          カテゴリ欄は支出のときだけ出す。sumByCategory は収入を集計に入れない
+          （「カテゴリは支出の内訳を見るためのもの」— aggregate/period.ts）ので、
+          収入に付けたカテゴリはどこにも出ない死んだ値になる。
+        */}
+        {kind === "expense" && (
         <Field label="カテゴリ">
           {/*
             「未分類」は選択肢に出さない。setLearnedCategory は UNCATEGORIZED を
@@ -141,6 +175,7 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
             ))}
           </select>
         </Field>
+        )}
 
         <p>
           <button type="submit" style={styles.primary} disabled={saving}>
@@ -184,6 +219,8 @@ const styles = {
   },
   label: { display: "flex", gap: 8, alignItems: "center", fontSize: 14 },
   labelText: { width: 96, flexShrink: 0 },
+  kinds: { display: "flex", gap: 16 },
+  kind: { display: "flex", gap: 4, alignItems: "center" },
   fieldError: {
     margin: "4px 0 0 104px",
     fontSize: 13,
