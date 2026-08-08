@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isLeapYear, daysInMonth, dayOfWeek } from "./date-parts.js";
+import { isLeapYear, daysInMonth, dayOfWeek, toIsoDate } from "./date-parts.js";
 
 function at<T>(items: readonly T[], index: number): T {
   const item = items[index];
@@ -312,5 +312,31 @@ describe("dayOfWeek — 4桁だが100未満の年", () => {
       dayOfWeek("0099-01-02"),
       dayOfWeek("0099-01-03"),
     ]).toEqual([4, 5, 6]);
+  });
+});
+
+describe("toIsoDate", () => {
+  it("ローカル日付を YYYY-MM-DD にする", () => {
+    expect(toIsoDate(new Date(2026, 7, 9))).toBe("2026-08-09");
+  });
+
+  it("月と日を2桁にゼロ埋めする", () => {
+    expect(toIsoDate(new Date(2026, 0, 5))).toBe("2026-01-05");
+  });
+
+  it("2桁の月日はそのまま並べる", () => {
+    expect(toIsoDate(new Date(2026, 11, 31))).toBe("2026-12-31");
+  });
+
+  it("時刻を持つ Date でも日付部分だけを返す", () => {
+    expect(toIsoDate(new Date(2026, 7, 9, 23, 59, 59))).toBe("2026-08-09");
+    expect(toIsoDate(new Date(2026, 7, 9, 0, 0, 0))).toBe("2026-08-09");
+  });
+
+  it("100未満の年を4桁にゼロ埋めする", () => {
+    // Date のコンストラクタは年 0〜99 を1900年代に読み替えるので setFullYear で作る。
+    const date = new Date(2026, 0, 1);
+    date.setFullYear(99, 0, 1);
+    expect(toIsoDate(date)).toBe("0099-01-01");
   });
 });

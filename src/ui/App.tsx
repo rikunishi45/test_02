@@ -6,11 +6,12 @@ import { reclassifyTransactions } from "../category/reclassify.js";
 import type { StoredTransaction } from "../storage/schema.js";
 import { useDatabase } from "./useDatabase.js";
 import { ImportScreen } from "./ImportScreen.js";
+import { CashEntryScreen } from "./CashEntryScreen.js";
 import { TransactionList } from "./TransactionList.js";
 import { SummaryScreen } from "./SummaryScreen.js";
 import { BackupPanel } from "./BackupPanel.js";
 
-type Tab = "summary" | "list" | "import";
+type Tab = "summary" | "list" | "import" | "cash";
 
 export function App() {
   const database = useDatabase();
@@ -92,6 +93,13 @@ export function App() {
         >
           CSV取り込み
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("cash")}
+          style={tab === "cash" ? styles.tabActive : styles.tab}
+        >
+          現金入力
+        </button>
       </nav>
 
       {tab === "summary" && <SummaryScreen transactions={transactions} />}
@@ -108,6 +116,9 @@ export function App() {
           learned={learned}
           onImported={reload}
         />
+      )}
+      {tab === "cash" && (
+        <CashEntryScreen db={database.db} learned={learned} onSaved={reload} />
       )}
 
       <BackupPanel db={database.db} onRestored={reload} />

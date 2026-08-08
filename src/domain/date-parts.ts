@@ -36,3 +36,18 @@ export function dayOfWeek(date: string): number {
   utc.setUTCFullYear(year, month - 1, day);
   return utc.getUTCDay();
 }
+
+/**
+ * `Date` の**ローカル**日付を `"YYYY-MM-DD"` にする。入力欄の初期値に使う。
+ *
+ * `toISOString().slice(0, 10)` を使わない。あれはUTCなので、JST(UTC+9)では
+ * 0時〜9時に前日の日付が出る。`dayOfWeek` がUTCで閉じるのと方針が逆に見えるが、
+ * 欲しいものが違う——あちらは文字列の曜日という環境に依らない事実で、
+ * こちらは「人間が今日だと思っている日」。
+ */
+export function toIsoDate(date: Date): string {
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
