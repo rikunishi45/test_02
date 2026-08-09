@@ -101,6 +101,8 @@ export function ImportScreen({ db, existing, learned, onImported }: Props) {
       ...entry.transaction,
       id: crypto.randomUUID(),
       category: categoryFor(entry.transaction, DEFAULT_CATEGORY_RULES, learned),
+      // CSVにメモに当たる列は無い。取り込んだ行は常に空。
+      memo: "",
     }));
 
     await saveImport(

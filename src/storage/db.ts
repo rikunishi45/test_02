@@ -1,12 +1,18 @@
 import { UNCATEGORIZED, type LearnedCategories } from "../category/classify.js";
+import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
+import { defaultCategories } from "../category/default-categories.js";
 import type { BackupData } from "./backup.js";
 import {
   DB_NAME,
   DB_VERSION,
+  STORE_BUDGETS,
+  STORE_CATEGORIES,
   STORE_COLUMN_MAPPINGS,
   STORE_IMPORTS,
   STORE_LEARNED_CATEGORIES,
   STORE_TRANSACTIONS,
+  type BudgetRecord,
+  type CategoryRecord,
   type ImportRecord,
   type NamedColumnMapping,
   type StoredTransaction,
@@ -50,9 +56,50 @@ async function writeAll(transaction: IDBTransaction, queueWrites: () => void): P
   await commit(transaction);
 }
 
+/**
+ * 既存の取引に `memo` を埋める。
+ *
+ * `memo` は空文字列で持つ約束（`schema.ts`）。省略可能にすると `memo ?? ""` が
+ * 呼び出し側に散るので、境界でここ1回だけ埋める。
+ *
+ * versionchange トランザクションの中で走るので、途中で失敗すればアップグレード
+ * ごと巻き戻ってDBはv1のまま残る。中途半端に埋まった状態にはならない。
+ */
+function backfillMemo(store: IDBObjectStore): void {
+  const request = store.openCursor();
+  request.onsuccess = () => {
+    const cursor = request.result;
+    if (cursor === null) {
+      return;
+    }
+    const value = cursor.value as StoredTransaction;
+    if (typeof value.memo !== "string") {
+      cursor.update({ ...value, memo: "" });
+    }
+    cursor.continue();
+  };
+}
+
+/**
+ * データベースを開く。必要ならスキーマを上げる。
+ *
+ * **`onblocked` を握るのが要。** 別のタブが古いバージョンで開いたままだと
+ * versionchange が始められず、`onsuccess` も `onerror` も来ない。握らないと
+ * Promise が永久に解決せず、画面は「読み込み中…」のまま何の説明も出せない。
+ * v1 しか無かった間は upgrade が起きなかったので表に出なかった経路。
+ */
 export function openDatabase(indexedDB: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onblocked = () => {
+      reject(
+        new Error(
+          "このアプリを開いている他のタブがあるため、データベースを更新できません。" +
+            "他のタブを閉じてから再読み込みしてください。",
+        ),
+      );
+    };
 
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -70,11 +117,43 @@ export function openDatabase(indexedDB: IDBFactory): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_LEARNED_CATEGORIES)) {
         db.createObjectStore(STORE_LEARNED_CATEGORIES, { keyPath: "description" });
       }
+
+      // --- v2 で増えたもの ---
+      if (!db.objectStoreNames.contains(STORE_CATEGORIES)) {
+        const store = db.createObjectStore(STORE_CATEGORIES, { keyPath: "name" });
+        // 新規・既存を問わず初期値を入れる。ここでしか入れないので、後から
+        // ユーザーが消したカテゴリが次回の起動で復活することは無い。
+        for (const category of defaultCategories(DEFAULT_CATEGORY_RULES)) {
+          store.put(category);
+        }
+      }
+      if (!db.objectStoreNames.contains(STORE_BUDGETS)) {
+        const store = db.createObjectStore(STORE_BUDGETS, { keyPath: "id" });
+        // 予算画面は月単位で開くので、月で引ける索引を張る。
+        store.createIndex("month", "month");
+      }
+
+      // 新規作成なら取引が空なので、埋め戻しは何もせずに終わる。`oldVersion` で
+      // 分岐しないのはそのため——**どちらの経路でも結果が同じ条件を書くと、
+      // 外しても誰も気づけない分岐が増える**だけになる。
+      // onupgradeneeded の中では transaction は必ずある。型システムはそれを
+      // 証明できないので ! で閉じる（parse-date.ts と同じ方針）。
+      backfillMemo(request.transaction!.objectStore(STORE_TRANSACTIONS));
     };
 
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+
+export function getAllCategories(db: IDBDatabase): Promise<CategoryRecord[]> {
+  const store = db.transaction(STORE_CATEGORIES, "readonly").objectStore(STORE_CATEGORIES);
+  return toPromise(store.getAll() as IDBRequest<CategoryRecord[]>);
+}
+
+export function getAllBudgets(db: IDBDatabase): Promise<BudgetRecord[]> {
+  const store = db.transaction(STORE_BUDGETS, "readonly").objectStore(STORE_BUDGETS);
+  return toPromise(store.getAll() as IDBRequest<BudgetRecord[]>);
 }
 
 export function getAllTransactions(db: IDBDatabase): Promise<StoredTransaction[]> {
@@ -184,7 +263,14 @@ export async function setLearnedCategory(
  */
 export async function replaceAll(db: IDBDatabase, backup: BackupData): Promise<void> {
   const tx = db.transaction(
-    [STORE_TRANSACTIONS, STORE_IMPORTS, STORE_COLUMN_MAPPINGS, STORE_LEARNED_CATEGORIES],
+    [
+      STORE_TRANSACTIONS,
+      STORE_IMPORTS,
+      STORE_COLUMN_MAPPINGS,
+      STORE_LEARNED_CATEGORIES,
+      STORE_CATEGORIES,
+      STORE_BUDGETS,
+    ],
     "readwrite",
   );
 
@@ -211,6 +297,18 @@ export async function replaceAll(db: IDBDatabase, backup: BackupData): Promise<v
     learned.clear();
     for (const [description, category] of Object.entries(backup.learnedCategories)) {
       learned.put({ description, category });
+    }
+
+    const categories = tx.objectStore(STORE_CATEGORIES);
+    categories.clear();
+    for (const category of backup.categories) {
+      categories.put(category);
+    }
+
+    const budgets = tx.objectStore(STORE_BUDGETS);
+    budgets.clear();
+    for (const budget of backup.budgets) {
+      budgets.put(budget);
     }
   });
 }

@@ -59,6 +59,8 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
         ...result.transaction,
         id: crypto.randomUUID(),
         category: categoryFor(result.transaction, DEFAULT_CATEGORY_RULES, learned),
+        // 入力欄は段階3で足す。それまでは空で入れる。
+        memo: "",
       };
       await putTransactions(db, [stored]);
 

@@ -1,7 +1,19 @@
-import type { StoredTransaction, ImportRecord, NamedColumnMapping } from "./schema.js";
+import type {
+  StoredTransaction,
+  ImportRecord,
+  NamedColumnMapping,
+  CategoryRecord,
+  BudgetRecord,
+} from "./schema.js";
 import type { LearnedCategories } from "../category/classify.js";
+import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
+import { defaultCategories } from "../category/default-categories.js";
 
-export const BACKUP_FORMAT_VERSION = 1;
+/** 書き出す形式。カテゴリ・予算・`memo` が増えた分を 2 とする */
+export const BACKUP_FORMAT_VERSION = 2;
+
+/** 読める形式。古いものは読み替えて受け入れる（`parseBackup`） */
+const READABLE_FORMAT_VERSIONS = [1, 2];
 
 export interface BackupData {
   formatVersion: number;
@@ -10,6 +22,8 @@ export interface BackupData {
   imports: ImportRecord[];
   columnMappings: NamedColumnMapping[];
   learnedCategories: LearnedCategories;
+  categories: CategoryRecord[];
+  budgets: BudgetRecord[];
 }
 
 export type BackupPayload = Omit<BackupData, "formatVersion" | "exportedAt">;
@@ -28,6 +42,8 @@ export function buildBackup(payload: BackupPayload, exportedAt: string): BackupD
     imports: [...payload.imports],
     columnMappings: [...payload.columnMappings],
     learnedCategories: { ...payload.learnedCategories },
+    categories: [...payload.categories],
+    budgets: [...payload.budgets],
   };
 }
 
@@ -57,6 +73,70 @@ function validateTransactions(items: unknown[]): void {
     }
     if (!TRANSACTION_SOURCES.includes(item["source"] as string)) {
       throw new Error(`parseBackup: transactions[${index}].source が未知の値`);
+    }
+    // v1 のバックアップには memo が無い。無いのは許して後で空文字列を入れるが、
+    // 別の型が入っているのは書き換えられたファイルなので通さない。
+    const memo = item["memo"];
+    if (memo !== undefined && typeof memo !== "string") {
+      throw new Error(`parseBackup: transactions[${index}].memo が文字列ではない`);
+    }
+  }
+}
+
+/** `#rrggbb` だけを受ける。画面がそのまま style に渡すので、形の分からない値は入れない */
+const HEX_COLOR = /^#[0-9a-f]{6}$/iu;
+
+/**
+ * 主キーの重複を弾く。
+ *
+ * `replaceAll` は全消ししてから `put` するので、重複したキーは**最後の1件だけが
+ * 残り、復元は成功として報告される。** 静かに減るのが最悪なので境界で止める。
+ * アプリ自身の書き出しでは起きない（両ストアとも主キーで keyed）が、手で
+ * 編集されたファイルを読むのがこの関数の役目。
+ */
+function validateUniqueKeys(items: unknown[], label: string, field: string): void {
+  const seen = new Set<unknown>();
+  for (const [index, item] of items.entries()) {
+    const key = (item as Record<string, unknown>)[field];
+    if (seen.has(key)) {
+      throw new Error(`parseBackup: ${label}[${index}].${field} が重複している`);
+    }
+    seen.add(key);
+  }
+}
+
+function validateCategories(items: unknown[]): void {
+  for (const [index, item] of items.entries()) {
+    if (!isPlainObject(item)) {
+      throw new Error(`parseBackup: categories[${index}] がオブジェクトではない`);
+    }
+    if (typeof item["name"] !== "string" || item["name"] === "") {
+      throw new Error(`parseBackup: categories[${index}].name が空でない文字列ではない`);
+    }
+    if (typeof item["color"] !== "string" || !HEX_COLOR.test(item["color"])) {
+      throw new Error(`parseBackup: categories[${index}].color が #rrggbb ではない`);
+    }
+    if (typeof item["order"] !== "number" || !Number.isInteger(item["order"])) {
+      throw new Error(`parseBackup: categories[${index}].order が整数ではない`);
+    }
+  }
+}
+
+function validateBudgets(items: unknown[]): void {
+  for (const [index, item] of items.entries()) {
+    if (!isPlainObject(item)) {
+      throw new Error(`parseBackup: budgets[${index}] がオブジェクトではない`);
+    }
+    for (const key of ["id", "month", "category"]) {
+      if (typeof item[key] !== "string") {
+        throw new Error(`parseBackup: budgets[${index}].${key} が文字列ではない`);
+      }
+    }
+    // 予算は正の数で持つ（schema.ts）。負や 0 を通すと達成率が 0 除算や
+    // 負の割合になり、画面では「それらしい数字」として出てしまう。
+    const amount = item["amountYen"];
+    if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0) {
+      throw new Error(`parseBackup: budgets[${index}].amountYen が1以上の整数ではない`);
     }
   }
 }
@@ -105,8 +185,11 @@ function validateImports(items: unknown[]): void {
  * バックアップJSONを読む。
  *
  * ここはシステム境界（外部から来るファイル）なので検証する。
- * 形式のバージョンが違うものは黙って読まない——将来フィールドを増やしたとき、
- * 古いアプリが新しいバックアップを中途半端に読み込むと、差分が静かに消える。
+ *
+ * **古い形式（v1）は読み替えて受け入れる。** 「ときどき書き出してください」と
+ * 案内してきた以上、手元にv1のファイルがある前提で作る必要がある。逆に
+ * **新しすぎる形式は読まない**——古いアプリが新しいバックアップを中途半端に
+ * 読み込むと、知らないフィールドが静かに消える。
  */
 export function parseBackup(json: string): BackupData {
   const parsed: unknown = JSON.parse(json);
@@ -117,7 +200,7 @@ export function parseBackup(json: string): BackupData {
   if (typeof parsed["formatVersion"] !== "number") {
     throw new Error("parseBackup: formatVersion が数値ではない");
   }
-  if (parsed["formatVersion"] !== BACKUP_FORMAT_VERSION) {
+  if (!READABLE_FORMAT_VERSIONS.includes(parsed["formatVersion"])) {
     throw new Error(
       `parseBackup: 対応していない形式のバージョン: ${String(parsed["formatVersion"])}`,
     );
@@ -142,12 +225,44 @@ export function parseBackup(json: string): BackupData {
   validateImports(parsed["imports"]);
   validateColumnMappings(parsed["columnMappings"]);
 
+  let categories: CategoryRecord[];
+  let budgets: BudgetRecord[];
+  if (parsed["formatVersion"] === 1) {
+    // v1 はカテゴリのマスタも予算も持たない。空配列で復元すると、復元した瞬間に
+    // カテゴリ一覧が消える（replaceAll はストアを全消ししてから書く）。
+    // マイグレーションと同じ初期値を入れ直す。
+    categories = defaultCategories(DEFAULT_CATEGORY_RULES);
+    budgets = [];
+  } else {
+    if (!Array.isArray(parsed["categories"])) {
+      throw new Error("parseBackup: categories が配列ではない");
+    }
+    if (!Array.isArray(parsed["budgets"])) {
+      throw new Error("parseBackup: budgets が配列ではない");
+    }
+    validateCategories(parsed["categories"]);
+    validateBudgets(parsed["budgets"]);
+    // 型の検証を通してから見る。先に見ると、壊れた要素の欠けたキーが
+    // undefined 同士で「重複」に化ける。
+    validateUniqueKeys(parsed["categories"], "categories", "name");
+    validateUniqueKeys(parsed["budgets"], "budgets", "id");
+    categories = parsed["categories"] as CategoryRecord[];
+    budgets = parsed["budgets"] as BudgetRecord[];
+  }
+
   return {
     formatVersion: parsed["formatVersion"],
     exportedAt: parsed["exportedAt"],
-    transactions: parsed["transactions"] as StoredTransaction[],
+    // 検証は通っているが、v1 の取引には memo が無い。型の上では string でも
+    // 実際には欠けているので、ここで埋める。
+    transactions: (parsed["transactions"] as StoredTransaction[]).map((transaction) => ({
+      ...transaction,
+      memo: transaction.memo ?? "",
+    })),
     imports: parsed["imports"] as ImportRecord[],
     columnMappings: parsed["columnMappings"] as NamedColumnMapping[],
     learnedCategories: parsed["learnedCategories"] as LearnedCategories,
+    categories,
+    budgets,
   };
 }

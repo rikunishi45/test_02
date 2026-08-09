@@ -15,6 +15,7 @@ const BASE: StoredTransaction = {
   description: "NETFLIX",
   source: "card",
   category: "サブスク",
+  memo: "",
 };
 
 let sequence = 0;
