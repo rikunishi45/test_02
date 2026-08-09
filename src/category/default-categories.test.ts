@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { INCOME, UNCATEGORIZED, type CategoryRule } from "./classify.js";
 import type { CategoryRecord } from "../storage/schema.js";
 import {
+  categoryNames,
   defaultCategories,
   CATEGORY_PALETTE,
   INCOME_COLOR,
@@ -375,5 +376,122 @@ describe("defaultCategories", () => {
     it("空配列を凍結して渡しても、書き換えを試みない", () => {
       expect(() => defaultCategories(Object.freeze([]))).not.toThrow();
     });
+  });
+});
+
+describe("categoryNames", () => {
+  function record(name: string, order: number): CategoryRecord {
+    return { name, color: "#112233", order };
+  }
+
+  describe("order の昇順に並べる", () => {
+    it("order の順で名前を返す", () => {
+      const records = [record("交通費", 2), record("食費", 0), record("日用品", 1)];
+
+      expect(categoryNames(records)).toEqual(["食費", "日用品", "交通費"]);
+    });
+
+    it("入力が既に昇順でもそのままの順で返る", () => {
+      const records = [record("食費", 0), record("日用品", 1), record("交通費", 2)];
+
+      expect(categoryNames(records)).toEqual(["食費", "日用品", "交通費"]);
+    });
+
+    it("入力の順序に依存しない（逆順で渡しても同じ）", () => {
+      const records = [record("食費", 0), record("日用品", 1), record("交通費", 2)];
+
+      expect(categoryNames([...records].reverse())).toEqual(categoryNames(records));
+    });
+
+    it("order が連番でなくても大小関係だけで並ぶ", () => {
+      const records = [record("c", 100), record("a", -5), record("b", 7)];
+
+      expect(categoryNames(records)).toEqual(["a", "b", "c"]);
+    });
+
+    it("order が負でも小さい方が先", () => {
+      expect(categoryNames([record("後", 0), record("先", -1)])).toEqual(["先", "後"]);
+    });
+
+    it("order が10以上でも数値として比較する（文字列比較なら 10 が 2 より前に来る）", () => {
+      const records = [record("ten", 10), record("two", 2)];
+
+      expect(categoryNames(records)).toEqual(["two", "ten"]);
+    });
+  });
+
+  describe("order が同じときは名前の昇順で決着する", () => {
+    it("同じ order の2件は名前順になる", () => {
+      const records = [record("b", 0), record("a", 0)];
+
+      expect(categoryNames(records)).toEqual(["a", "b"]);
+    });
+
+    it("同じ order の3件が入力順に依存しない", () => {
+      const records = [record("c", 5), record("a", 5), record("b", 5)];
+
+      expect(categoryNames([...records].reverse())).toEqual(["a", "b", "c"]);
+    });
+
+    it("order の違いが名前より優先される", () => {
+      const records = [record("a", 1), record("b", 0)];
+
+      expect(categoryNames(records)).toEqual(["b", "a"]);
+    });
+  });
+
+  describe("端のケース", () => {
+    it("空配列なら空配列", () => {
+      expect(categoryNames([])).toEqual([]);
+    });
+
+    it("1件なら1件だけ返る", () => {
+      expect(categoryNames([record("食費", 3)])).toEqual(["食費"]);
+    });
+
+    it("名前だけを返す（色や order は返さない）", () => {
+      expect(categoryNames([record("食費", 0)])).toEqual(["食費"]);
+    });
+
+    it("件数が減らない（同名でない限り畳まれない）", () => {
+      const records = [record("a", 0), record("b", 0), record("c", 1)];
+
+      expect(categoryNames(records)).toHaveLength(3);
+    });
+  });
+
+  describe("入力を書き換えない", () => {
+    it("並べ替えても元の配列の順序が変わらない", () => {
+      const records = [record("c", 2), record("a", 0), record("b", 1)];
+      const snapshot = structuredClone(records);
+
+      categoryNames(records);
+
+      expect(records).toEqual(snapshot);
+    });
+
+    it("凍結された配列を渡しても動く", () => {
+      const records = Object.freeze([
+        Object.freeze(record("b", 1)),
+        Object.freeze(record("a", 0)),
+      ]) as readonly CategoryRecord[];
+
+      expect(categoryNames(records)).toEqual(["a", "b"]);
+    });
+  });
+
+  it("defaultCategories が作ったマスタをそのまま並べられる", () => {
+    const records = defaultCategories(DEFAULT_CATEGORY_RULES);
+    const names = categoryNames(records);
+
+    expect(names).toHaveLength(records.length);
+    expect(new Set(names)).toEqual(new Set(records.map((r) => r.name)));
+  });
+
+  it("defaultCategories の並び順（order）を保った名前の列を返す", () => {
+    const records = defaultCategories(DEFAULT_CATEGORY_RULES);
+    const expected = [...records].sort((a, b) => a.order - b.order).map((r) => r.name);
+
+    expect(categoryNames(records)).toEqual(expected);
   });
 });

@@ -27,6 +27,26 @@ export function monthOf(date: string): string {
 }
 
 /**
+ * 月キー（"YYYY-MM"）を `step` か月だけ動かす。
+ *
+ * **日付に「1か月」を足す形では書けない。** 1月31日の翌月は2月31日で、
+ * `Date` に足させると3月3日に繰り上がる。月キーだけを動かせばその問題が無い。
+ *
+ * 年は4桁にゼロ詰めする。`parseDate` は `\d{4}` を受理するので3桁以下の年が
+ * 保存され得て、詰めないと日付順の比較（文字列の辞書順）が壊れる。
+ */
+export function shiftMonth(month: string, step: number): string {
+  const year = Number(month.slice(0, 4));
+  const monthNumber = Number(month.slice(5, 7));
+  // 0起点の通し月に直してから動かす。12月をまたぐ繰り上がり・繰り下がりを
+  // 自分で場合分けしない。
+  const total = year * 12 + (monthNumber - 1) + step;
+  const shiftedYear = Math.floor(total / 12);
+  const shiftedMonth = total - shiftedYear * 12 + 1;
+  return `${String(shiftedYear).padStart(4, "0")}-${String(shiftedMonth).padStart(2, "0")}`;
+}
+
+/**
  * 期間キーごとに支出と収入を合計する。返る順序は期間の昇順。
  *
  * 日付は "YYYY-MM-DD" 固定なので、文字列の辞書順が日付順と一致する
@@ -111,4 +131,21 @@ export function inMonth(
   month: string,
 ): StoredTransaction[] {
   return transactions.filter((transaction) => monthOf(transaction.date) === month);
+}
+
+/**
+ * 指定したカテゴリの取引だけを取り出す。`null` は「絞り込まない」。
+ *
+ * 収入もカテゴリ（`"収入"`）を持つので、支出と同じ経路で絞れる。
+ * 照合は完全一致。カテゴリ名はマスタから来る決まった文字列で、摘要のような
+ * 表記の揺れが無い（揺れを畳むのは `normalizeDescription` の仕事）。
+ */
+export function inCategory(
+  transactions: readonly StoredTransaction[],
+  category: string | null,
+): StoredTransaction[] {
+  if (category === null) {
+    return [...transactions];
+  }
+  return transactions.filter((transaction) => transaction.category === category);
 }

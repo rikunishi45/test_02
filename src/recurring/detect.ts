@@ -1,5 +1,5 @@
 import { daysInMonth } from "../domain/date-parts.js";
-import { monthOf } from "../aggregate/period.js";
+import { monthOf, shiftMonth } from "../aggregate/period.js";
 import { normalizeDescription } from "../category/normalize.js";
 import type { StoredTransaction } from "../storage/schema.js";
 
@@ -114,14 +114,14 @@ function toCharge(group: readonly Occurrence[], throughMonth: string): Recurring
     return null;
   }
   for (let i = 1; i < months.length; i += 1) {
-    // 同じ月の2件目もここで落ちる（nextMonth は必ず違う月を返すため）。
-    if (nextMonth(months[i - 1]!) !== months[i]!) {
+    // 同じ月の2件目もここで落ちる（shiftMonth は必ず違う月を返すため）。
+    if (shiftMonth(months[i - 1]!, 1) !== months[i]!) {
       return null;
     }
   }
 
   const last = sorted[sorted.length - 1]!;
-  if (last.month !== throughMonth && nextMonth(last.month) !== throughMonth) {
+  if (last.month !== throughMonth && shiftMonth(last.month, 1) !== throughMonth) {
     return null;
   }
 
@@ -155,14 +155,6 @@ function median(amounts: readonly number[]): number {
   return sorted[Math.floor((sorted.length - 1) / 2)]!;
 }
 
-/** "YYYY-MM" の翌月 */
-function nextMonth(month: string): string {
-  const year = Number(month.slice(0, 4));
-  const monthNumber = Number(month.slice(5, 7));
-  const rolls = monthNumber === 12;
-  return `${String(rolls ? year + 1 : year).padStart(4, "0")}-${String(rolls ? 1 : monthNumber + 1).padStart(2, "0")}`;
-}
-
 /**
  * 翌月の同じ日。**その日が翌月に無ければ月末に寄せる。**
  *
@@ -171,7 +163,7 @@ function nextMonth(month: string): string {
  * 「次に落ちる予定」としては嘘になる。`daysInMonth` で切り詰める。
  */
 function sameDayNextMonth(date: string): string {
-  const month = nextMonth(monthOf(date));
+  const month = shiftMonth(monthOf(date), 1);
   const day = Math.min(
     Number(date.slice(8, 10)),
     daysInMonth(Number(month.slice(0, 4)), Number(month.slice(5, 7))),
