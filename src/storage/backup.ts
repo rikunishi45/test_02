@@ -86,6 +86,25 @@ function validateTransactions(items: unknown[]): void {
 /** `#rrggbb` だけを受ける。画面がそのまま style に渡すので、形の分からない値は入れない */
 const HEX_COLOR = /^#[0-9a-f]{6}$/iu;
 
+/**
+ * 主キーの重複を弾く。
+ *
+ * `replaceAll` は全消ししてから `put` するので、重複したキーは**最後の1件だけが
+ * 残り、復元は成功として報告される。** 静かに減るのが最悪なので境界で止める。
+ * アプリ自身の書き出しでは起きない（両ストアとも主キーで keyed）が、手で
+ * 編集されたファイルを読むのがこの関数の役目。
+ */
+function validateUniqueKeys(items: unknown[], label: string, field: string): void {
+  const seen = new Set<unknown>();
+  for (const [index, item] of items.entries()) {
+    const key = (item as Record<string, unknown>)[field];
+    if (seen.has(key)) {
+      throw new Error(`parseBackup: ${label}[${index}].${field} が重複している`);
+    }
+    seen.add(key);
+  }
+}
+
 function validateCategories(items: unknown[]): void {
   for (const [index, item] of items.entries()) {
     if (!isPlainObject(item)) {
@@ -223,6 +242,10 @@ export function parseBackup(json: string): BackupData {
     }
     validateCategories(parsed["categories"]);
     validateBudgets(parsed["budgets"]);
+    // 型の検証を通してから見る。先に見ると、壊れた要素の欠けたキーが
+    // undefined 同士で「重複」に化ける。
+    validateUniqueKeys(parsed["categories"], "categories", "name");
+    validateUniqueKeys(parsed["budgets"], "budgets", "id");
     categories = parsed["categories"] as CategoryRecord[];
     budgets = parsed["budgets"] as BudgetRecord[];
   }

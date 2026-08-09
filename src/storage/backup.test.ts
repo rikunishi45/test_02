@@ -1722,3 +1722,98 @@ describe("v2 形式：どの項目が原因かがエラーに出る", () => {
     ).toThrow(/categories\[1\]\.color/u);
   });
 });
+
+/**
+ * `replaceAll` は全消ししてから `put` する。主キーが重複していると最後の1件だけが
+ * 残り、**復元は成功として報告されるのに件数が減る。** 静かに減るのが最悪なので
+ * 境界で止める。
+ */
+describe("v2 形式：主キーの重複", () => {
+  it("categories の name が重複していれば例外", () => {
+    expect(() =>
+      parseBackup(
+        v2Json({
+          categories: [
+            elementWith(VALID_CATEGORY, "order", 0),
+            elementWith(VALID_CATEGORY, "order", 1),
+          ],
+        }),
+      ),
+    ).toThrow(/categories\[1\]\.name が重複している/u);
+  });
+
+  it("budgets の id が重複していれば例外", () => {
+    expect(() =>
+      parseBackup(
+        v2Json({
+          budgets: [
+            elementWith(VALID_BUDGET, "amountYen", 1000),
+            elementWith(VALID_BUDGET, "amountYen", 2000),
+          ],
+        }),
+      ),
+    ).toThrow(/budgets\[1\]\.id が重複している/u);
+  });
+
+  it("3件目で初めて重複するとき、位置に 2 が出る", () => {
+    expect(() =>
+      parseBackup(
+        v2Json({
+          categories: [
+            VALID_CATEGORY,
+            elementWith(VALID_CATEGORY, "name", "住居費"),
+            elementWith(VALID_CATEGORY, "name", "食費"),
+          ],
+        }),
+      ),
+    ).toThrow(/categories\[2\]\.name が重複している/u);
+  });
+
+  it("name が違えば、他の項目がすべて同じでも通る", () => {
+    expect(() =>
+      parseBackup(
+        v2Json({
+          categories: [
+            VALID_CATEGORY,
+            elementWith(VALID_CATEGORY, "name", "住居費"),
+          ],
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("id が違えば、月とカテゴリが同じでも通る", () => {
+    expect(() =>
+      parseBackup(
+        v2Json({
+          budgets: [VALID_BUDGET, elementWith(VALID_BUDGET, "id", "別のキー")],
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("1件だけなら重複しようがないので通る", () => {
+    expect(() => parseBackup(v2Json({ categories: [VALID_CATEGORY] }))).not.toThrow();
+  });
+
+  it("空配列でも通る", () => {
+    expect(() => parseBackup(v2Json({ categories: [], budgets: [] }))).not.toThrow();
+  });
+
+  /**
+   * 重複の検査を型の検査より先に置くと、キーが欠けた壊れた要素同士が
+   * undefined で「重複」に化け、原因を取り違えたエラーが出る。
+   */
+  it("要素が壊れているときは、重複ではなく型のエラーが出る", () => {
+    expect(() =>
+      parseBackup(
+        v2Json({
+          categories: [
+            elementWith(VALID_CATEGORY, "name", MISSING),
+            elementWith(VALID_CATEGORY, "name", MISSING),
+          ],
+        }),
+      ),
+    ).toThrow(/categories\[0\]\.name/u);
+  });
+});
