@@ -32,6 +32,22 @@ export const INCOME_COLOR = "#3ddc97";
 export const UNCATEGORIZED_COLOR = "#5d6b64";
 
 /**
+ * マスタを並び順に並べて名前だけ返す。
+ *
+ * ストアから読むと主キー（名前）の順で返るので、`order` を見て並べ直す必要が
+ * ある。同じ `order` は名前の昇順で決着させる——並びが入力順に依存すると、
+ * カテゴリを1つ足しただけで一覧の順序が入れ替わる（`sumByCategory` と同じ方針）。
+ *
+ * この関数はマスタの読み出しに使うもので、初期値作りとは別の用事だが、
+ * 同じ `CategoryRecord` を扱うのでここに置く。
+ */
+export function categoryNames(records: readonly CategoryRecord[]): string[] {
+  return [...records]
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+    .map((record) => record.name);
+}
+
+/**
  * カテゴリマスタの初期値をルールから作る。
  *
  * ルールに現れるカテゴリ名を重複なく取り、**名前の昇順**に並べる。ルールの

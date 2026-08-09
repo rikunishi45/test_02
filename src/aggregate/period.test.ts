@@ -3,10 +3,12 @@ import type { StoredTransaction } from "../storage/schema.js";
 import { UNCATEGORIZED } from "../category/classify.js";
 import {
   monthOf,
+  shiftMonth,
   sumByMonth,
   sumByDay,
   sumByCategory,
   inMonth,
+  inCategory,
   negateExpense,
   type PeriodTotal,
   type CategoryTotal,
@@ -784,5 +786,275 @@ describe("negateExpense", () => {
     ];
     const total = at(sumByMonth(incomeOnly), 0);
     expectPlusZero(negateExpense(total.expenseYen));
+  });
+});
+
+describe("shiftMonth", () => {
+  describe("月を1つ動かす", () => {
+    it("翌月を返す", () => {
+      expect(shiftMonth("2026-07", 1)).toBe("2026-08");
+    });
+
+    it("前月を返す", () => {
+      expect(shiftMonth("2026-07", -1)).toBe("2026-06");
+    });
+
+    it("0 なら同じ月をそのまま返す", () => {
+      expect(shiftMonth("2026-07", 0)).toBe("2026-07");
+    });
+  });
+
+  describe("年をまたぐ", () => {
+    it("12月の翌月は翌年の1月", () => {
+      expect(shiftMonth("2026-12", 1)).toBe("2027-01");
+    });
+
+    it("1月の前月は前年の12月", () => {
+      expect(shiftMonth("2026-01", -1)).toBe("2025-12");
+    });
+
+    it("12か月動かすと同じ月の翌年になる", () => {
+      expect(shiftMonth("2026-07", 12)).toBe("2027-07");
+    });
+
+    it("-12 で同じ月の前年になる", () => {
+      expect(shiftMonth("2026-07", -12)).toBe("2025-07");
+    });
+
+    it("1年をまたぐ大きさで動かす（+18 は1年半後）", () => {
+      expect(shiftMonth("2026-07", 18)).toBe("2028-01");
+    });
+
+    it("1年をまたぐ大きさで戻す（-18 は1年半前）", () => {
+      expect(shiftMonth("2026-07", -18)).toBe("2025-01");
+    });
+
+    it("閏年をまたいでも月キーの計算には影響しない（2024-02 の1年後）", () => {
+      expect(shiftMonth("2024-02", 12)).toBe("2025-02");
+    });
+  });
+
+  describe("すべての月で成り立つ", () => {
+    const months = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
+
+    it.each(months)("2026-%s の1か月後は、月が1つ進むか翌年の01になる", (mm) => {
+      const number = Number(mm);
+      const expected = number === 12 ? "2027-01" : `2026-${String(number + 1).padStart(2, "0")}`;
+
+      expect(shiftMonth(`2026-${mm}`, 1)).toBe(expected);
+    });
+
+    it.each(months)("2026-%s は +1 のあと -1 で元に戻る", (mm) => {
+      expect(shiftMonth(shiftMonth(`2026-${mm}`, 1), -1)).toBe(`2026-${mm}`);
+    });
+
+    it("1か月ずつ24回動かすと、+24 と同じ月になる", () => {
+      let stepped = "2026-03";
+      for (let i = 0; i < 24; i += 1) {
+        stepped = shiftMonth(stepped, 1);
+      }
+
+      expect(stepped).toBe(shiftMonth("2026-03", 24));
+      expect(stepped).toBe("2028-03");
+    });
+
+    it("1か月ずつ進めると、12か月で12個の異なる月が現れる（同じ月に留まらない）", () => {
+      const seen = new Set<string>();
+      let stepped = "2026-01";
+      for (let i = 0; i < 12; i += 1) {
+        stepped = shiftMonth(stepped, 1);
+        seen.add(stepped);
+      }
+
+      expect(seen.size).toBe(12);
+    });
+  });
+
+  describe("ゼロ埋め", () => {
+    // parseDate は \d{4} を受理するので3桁以下の年が保存され得る。詰めないと
+    // 日付順の比較（文字列の辞書順）が壊れる。
+    it("年を4桁に詰める（0099-01 の翌月）", () => {
+      expect(shiftMonth("0099-01", 1)).toBe("0099-02");
+    });
+
+    it("3桁の年も4桁に詰める（0099-12 の翌月は 0100-01）", () => {
+      expect(shiftMonth("0099-12", 1)).toBe("0100-01");
+    });
+
+    it("1桁の年も4桁に詰める（0001-12 の翌月は 0002-01）", () => {
+      expect(shiftMonth("0001-12", 1)).toBe("0002-01");
+    });
+
+    it("100未満の年を戻しても4桁のまま（0005-01 の前月は 0004-12）", () => {
+      expect(shiftMonth("0005-01", -1)).toBe("0004-12");
+    });
+
+    it("月を2桁に詰める（12月から2か月戻すと 10、9か月戻すと 03）", () => {
+      expect(shiftMonth("2026-12", -2)).toBe("2026-10");
+      expect(shiftMonth("2026-12", -9)).toBe("2026-03");
+    });
+
+    it("結果は常に YYYY-MM の7文字", () => {
+      for (const step of [-25, -13, -1, 0, 1, 13, 25]) {
+        expect(shiftMonth("0099-06", step)).toMatch(/^\d{4}-\d{2}$/);
+      }
+    });
+  });
+
+  describe("月キーの順序が保たれる", () => {
+    it("進めた月は元の月より辞書順で後ろ（年をまたいでも）", () => {
+      expect(shiftMonth("2026-12", 1) > "2026-12").toBe(true);
+      expect(shiftMonth("0099-12", 1) > "0099-12").toBe(true);
+    });
+
+    it("戻した月は元の月より辞書順で前（年をまたいでも）", () => {
+      expect(shiftMonth("2026-01", -1) < "2026-01").toBe(true);
+      expect(shiftMonth("0100-01", -1) < "0100-01").toBe(true);
+    });
+  });
+
+  it("引数の月キーを読むだけで、返る文字列は新しい値", () => {
+    const month = "2026-07";
+
+    expect(shiftMonth(month, 3)).toBe("2026-10");
+    expect(month).toBe("2026-07");
+  });
+});
+
+describe("inCategory", () => {
+  describe("null は絞り込まない", () => {
+    it("全件を返す", () => {
+      const transactions = [
+        tx({ id: "a", category: "食費" }),
+        tx({ id: "b", category: "交通費" }),
+      ];
+
+      expect(inCategory(transactions, null).map((t) => t.id)).toEqual(["a", "b"]);
+    });
+
+    it("入力の配列そのものは返さない（呼び出し側の書き換えが波及しない）", () => {
+      const input = [tx({ category: "食費" })];
+
+      expect(inCategory(input, null)).not.toBe(input);
+    });
+
+    it("空の配列でも空で返る", () => {
+      expect(inCategory([], null)).toEqual([]);
+    });
+  });
+
+  describe("カテゴリでの絞り込み", () => {
+    it("指定したカテゴリの取引だけを返す", () => {
+      const transactions = [
+        tx({ id: "a", category: "食費" }),
+        tx({ id: "b", category: "交通費" }),
+        tx({ id: "c", category: "食費" }),
+      ];
+
+      expect(inCategory(transactions, "食費").map((t) => t.id)).toEqual(["a", "c"]);
+    });
+
+    it("元の並び順を保つ", () => {
+      const transactions = [
+        tx({ id: "a", category: "食費", date: "2026-03-01" }),
+        tx({ id: "b", category: "交通費", date: "2026-01-01" }),
+        tx({ id: "c", category: "食費", date: "2026-02-01" }),
+        tx({ id: "d", category: "食費", date: "2026-01-15" }),
+      ];
+
+      expect(inCategory(transactions, "食費").map((t) => t.id)).toEqual(["a", "c", "d"]);
+    });
+
+    it("該当が無ければ空の配列", () => {
+      expect(inCategory([tx({ category: "食費" })], "交通費")).toEqual([]);
+    });
+
+    it("空の配列を渡すと空で返る", () => {
+      expect(inCategory([], "食費")).toEqual([]);
+    });
+
+    it("取引そのものは複製せず、同じ参照を返す", () => {
+      const transaction = tx({ category: "食費" });
+
+      expect(at(inCategory([transaction], "食費"), 0)).toBe(transaction);
+    });
+  });
+
+  describe("照合は完全一致", () => {
+    it.each([["食"], ["食費類"], ["費"], [" 食費"], ["食費 "], ["しょくひ"]])(
+      "%s は 食費 に一致しない",
+      (category) => {
+        expect(inCategory([tx({ category: "食費" })], category)).toEqual([]);
+      },
+    );
+
+    it("空文字は空文字のカテゴリにだけ一致する", () => {
+      const transactions = [tx({ id: "a", category: "" }), tx({ id: "b", category: "食費" })];
+
+      expect(inCategory(transactions, "").map((t) => t.id)).toEqual(["a"]);
+    });
+  });
+
+  describe("収入と未分類も同じ経路で絞れる", () => {
+    it("収入のカテゴリで絞ると収入だけが残る", () => {
+      const transactions = [
+        tx({ id: "a", category: "収入", amountYen: 250000 }),
+        tx({ id: "b", category: "食費", amountYen: -1200 }),
+      ];
+
+      expect(inCategory(transactions, "収入").map((t) => t.id)).toEqual(["a"]);
+    });
+
+    it("支出のカテゴリで絞ると収入は残らない", () => {
+      const transactions = [
+        tx({ id: "a", category: "収入", amountYen: 250000 }),
+        tx({ id: "b", category: "食費", amountYen: -1200 }),
+      ];
+
+      expect(inCategory(transactions, "食費").map((t) => t.id)).toEqual(["b"]);
+    });
+
+    it("未分類で絞ると未分類だけが残る", () => {
+      const transactions = [
+        tx({ id: "a", category: UNCATEGORIZED }),
+        tx({ id: "b", category: "食費" }),
+      ];
+
+      expect(inCategory(transactions, UNCATEGORIZED).map((t) => t.id)).toEqual(["a"]);
+    });
+  });
+
+  describe("入力を書き換えない", () => {
+    it("凍結された配列を渡しても動く", () => {
+      const transactions = Object.freeze([
+        Object.freeze(tx({ id: "a", category: "食費" })),
+        Object.freeze(tx({ id: "b", category: "交通費" })),
+      ]) as readonly StoredTransaction[];
+
+      expect(inCategory(transactions, "食費").map((t) => t.id)).toEqual(["a"]);
+    });
+
+    it("呼び出し後も元の配列の長さと順序が変わらない", () => {
+      const transactions = [
+        tx({ id: "a", category: "食費" }),
+        tx({ id: "b", category: "交通費" }),
+      ];
+
+      inCategory(transactions, "食費");
+
+      expect(transactions.map((t) => t.id)).toEqual(["a", "b"]);
+    });
+  });
+
+  it("絞り込んだ結果の合計が、そのカテゴリの合計と一致する", () => {
+    const transactions = [
+      tx({ category: "食費", amountYen: -1200, date: "2026-01-05" }),
+      tx({ category: "交通費", amountYen: -500, date: "2026-01-06" }),
+      tx({ category: "食費", amountYen: -800, date: "2026-01-07" }),
+    ];
+
+    const summed = sumByMonth(inCategory(transactions, "食費"));
+
+    expect(at(summed, 0).expenseYen).toBe(2000);
   });
 });

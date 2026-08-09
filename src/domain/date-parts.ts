@@ -38,6 +38,31 @@ export function dayOfWeek(date: string): number {
 }
 
 /**
+ * `"YYYY-MM-DD"` に日数を足す。負の数で引ける。
+ *
+ * **UTCで組んでUTCで読む**（`dayOfWeek` と同じ理由）。ローカル時刻で組むと、
+ * 夏時間のある地域で日付が1日ずれる。`Date.UTC` ではなく `setUTCFullYear` を
+ * 使うのも同じ理由で、年 0〜99 が1900年代に読み替えられるのを避けるため。
+ *
+ * 週表示は月をまたぐ（7月最終週の後半が8月になる）ので、月末・年末・うるう年の
+ * 繰り上がりを自分で書かずに `Date` に任せる。
+ */
+export function addDays(date: string, days: number): string {
+  const utc = new Date(0);
+  utc.setUTCFullYear(
+    Number(date.slice(0, 4)),
+    Number(date.slice(5, 7)) - 1,
+    Number(date.slice(8, 10)),
+  );
+  utc.setUTCDate(utc.getUTCDate() + days);
+
+  const year = String(utc.getUTCFullYear()).padStart(4, "0");
+  const month = String(utc.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(utc.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * `Date` の**ローカル**日付を `"YYYY-MM-DD"` にする。入力欄の初期値に使う。
  *
  * `toISOString().slice(0, 10)` を使わない。あれはUTCなので、JST(UTC+9)では
