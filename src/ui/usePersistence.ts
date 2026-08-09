@@ -10,11 +10,20 @@ export function usePersistence(): PersistenceState | null {
 
   useEffect(() => {
     let cancelled = false;
-    void requestPersistence(navigator.storage).then((result) => {
-      if (!cancelled) {
-        setState(result);
-      }
-    });
+    requestPersistence(navigator.storage)
+      .then((result) => {
+        if (!cancelled) {
+          setState(result);
+        }
+      })
+      // 失敗したときに null のままにしない。警告は「null 以外かつ persisted 以外」で
+      // 出るので、null で固まると**データが揮発し得る状態で何も伝わらない**。
+      // 要求が通ったと確認できない以上、警告が出る側に倒す。
+      .catch(() => {
+        if (!cancelled) {
+          setState("unsupported");
+        }
+      });
     return () => {
       cancelled = true;
     };
