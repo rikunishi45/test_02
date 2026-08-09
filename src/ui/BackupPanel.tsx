@@ -7,6 +7,14 @@ import {
   getLearnedCategories,
   replaceAll,
 } from "../storage/db.js";
+import type { PersistenceState } from "../storage/persistence.js";
+
+const PERSISTENCE_WARNING: Record<Exclude<PersistenceState, "persisted">, string> = {
+  denied:
+    "このブラウザは永続化を許可していません。ストレージが逼迫すると、ここのデータは予告なく消えることがあります。",
+  unsupported:
+    "このブラウザでは永続化を要求できません（HTTPS でないページでは無効です）。データは予告なく消えることがあります。",
+};
 
 /**
  * バックアップの書き出しと復元。
@@ -15,7 +23,16 @@ import {
  * 元のCSVを取っておいても、手動入力とカテゴリの修正は戻らない。
  * だからアプリ自身のデータを書き出せる経路が要る。
  */
-export function BackupPanel({ db, onRestored }: { db: IDBDatabase; onRestored: () => void }) {
+export function BackupPanel({
+  db,
+  persistence,
+  onRestored,
+}: {
+  db: IDBDatabase;
+  /** 永続化の要求結果。まだ返ってきていない間は null */
+  persistence: PersistenceState | null;
+  onRestored: () => void;
+}) {
   const [message, setMessage] = useState("");
 
   async function exportBackup() {
@@ -70,6 +87,11 @@ export function BackupPanel({ db, onRestored }: { db: IDBDatabase; onRestored: (
         データはこのブラウザの中だけに保存されます。ブラウザのデータを消すと失われるので、
         ときどき書き出しておいてください。
       </p>
+
+      {/* 要求が返る前（null）と、許可された場合は何も出さない。 */}
+      {persistence !== null && persistence !== "persisted" && (
+        <p style={styles.warn}>{PERSISTENCE_WARNING[persistence]}</p>
+      )}
       <p style={styles.row}>
         <button type="button" onClick={() => void exportBackup()}>
           書き出す（JSON）
