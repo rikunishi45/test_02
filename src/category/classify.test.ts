@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyDescription,
+  categoryFor,
+  isCategorizable,
+  INCOME,
   UNCATEGORIZED,
   type CategoryRule,
   type LearnedCategories,
@@ -497,6 +500,354 @@ describe("classifyDescription", () => {
         UNCATEGORIZED,
       );
       expect(classifyDescription("セブンイレブン", rules, learned)).toBe("食費");
+    });
+  });
+});
+
+/** categoryFor / isCategorizable に渡す最小の取引。書き換えを試みたら落ちるよう凍結する */
+function txOf(
+  description: string,
+  amountYen: number,
+): Readonly<{ description: string; amountYen: number }> {
+  return Object.freeze({ description, amountYen });
+}
+
+describe("INCOME", () => {
+  it('収入カテゴリは "収入" である', () => {
+    expect(INCOME).toBe("収入");
+  });
+
+  it("収入カテゴリと未分類カテゴリは別の値である", () => {
+    expect(INCOME).not.toBe(UNCATEGORIZED);
+  });
+});
+
+describe("isCategorizable", () => {
+  describe("支出（負）だけが編集できる", () => {
+    it.each<[string, number]>([
+      ["典型的な支出", -1000],
+      ["境界（最小の支出）", -1],
+      ["大きな支出", -1234567],
+    ])("金額が負のとき true（%s）", (_name, amountYen) => {
+      expect(isCategorizable({ amountYen })).toBe(true);
+    });
+
+    it.each<[string, number]>([
+      ["典型的な収入", 250000],
+      ["境界（最小の収入）", 1],
+      ["大きな収入", 1234567],
+    ])("金額が正のとき false（%s）", (_name, amountYen) => {
+      expect(isCategorizable({ amountYen })).toBe(false);
+    });
+
+    it("金額が 0 のとき false", () => {
+      expect(isCategorizable({ amountYen: 0 })).toBe(false);
+    });
+
+    it("金額が -0 のとき false（-0 < 0 は偽なので支出として扱わない）", () => {
+      const amountYen = -0;
+      // フィクスチャが本当に -0 であることを先に固定する（+0 に潰れていたら意味が無い）
+      expect(Object.is(amountYen, -0)).toBe(true);
+
+      expect(isCategorizable({ amountYen })).toBe(false);
+    });
+
+    it("-1 と 1 で結果が反転する（符号が判定軸である）", () => {
+      expect(isCategorizable({ amountYen: -1 })).toBe(true);
+      expect(isCategorizable({ amountYen: 1 })).toBe(false);
+    });
+
+    it("0 をまたぐ -1 / 0 / 1 で、true になるのは -1 だけ", () => {
+      expect([-1, 0, 1].map((amountYen) => isCategorizable({ amountYen }))).toEqual([
+        true,
+        false,
+        false,
+      ]);
+    });
+
+    it("boolean を返す（truthy な別の値ではない）", () => {
+      expect(typeof isCategorizable({ amountYen: -1000 })).toBe("boolean");
+      expect(typeof isCategorizable({ amountYen: 1000 })).toBe("boolean");
+    });
+  });
+});
+
+describe("categoryFor", () => {
+  describe("収入（正）は分類しない", () => {
+    it("ルールも学習も無いとき、収入カテゴリを返す", () => {
+      expect(categoryFor(txOf("給与振込", 250000), NO_RULES, NO_LEARNED)).toBe(
+        INCOME,
+      );
+    });
+
+    it("摘要がルールに当たっても、収入カテゴリを返す", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      expect(categoryFor(txOf("セブンイレブン", 1000), rules, NO_LEARNED)).toBe(
+        INCOME,
+      );
+    });
+
+    it("学習に完全一致のエントリがあっても、収入カテゴリを返す", () => {
+      const learned = learnedOf([["セブンイレブン", "食費"]]);
+      expect(categoryFor(txOf("セブンイレブン", 1000), NO_RULES, learned)).toBe(
+        INCOME,
+      );
+    });
+
+    it("学習とルールが両方当たっても、収入カテゴリを返す", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = learnedOf([["セブンイレブン", "交際費"]]);
+      expect(categoryFor(txOf("セブンイレブン", 1000), rules, learned)).toBe(INCOME);
+    });
+
+    it("金額が 1 円（境界）でも、収入カテゴリを返す", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      expect(categoryFor(txOf("セブンイレブン", 1), rules, NO_LEARNED)).toBe(INCOME);
+    });
+
+    it.each([
+      ["ルールに当たる摘要", "セブンイレブン渋谷店"],
+      ["学習に完全一致する摘要", "Amazon.co.jp"],
+      ["空文字列の摘要", ""],
+      ["どれにも当たらない摘要", "架空商店ＸＹＺ９９"],
+      ["プロトタイプ由来のキー名", "constructor"],
+      ["プロトタイプ由来のキー名", "__proto__"],
+      ["プロトタイプ由来のキー名", "toString"],
+    ])("金額が正なら、摘要を変えても収入カテゴリのまま（%s）", (_name, description) => {
+      const rules = frozenRules([ruleOf("セブン", "食費"), ruleOf("", "空パターン")]);
+      const learned = learnedOf([
+        ["Amazon.co.jp", "書籍"],
+        ["", "手入力"],
+        ["constructor", "工事"],
+        ["__proto__", "プロト"],
+        ["toString", "文字列"],
+      ]);
+
+      const result = categoryFor(txOf(description, 1000), rules, learned);
+
+      expect(typeof result).toBe("string");
+      expect(result).toBe(INCOME);
+    });
+  });
+
+  describe("0 円は収入にも支出にも寄せない", () => {
+    it("ルールも学習も無いとき、未分類", () => {
+      expect(categoryFor(txOf("給与調整", 0), NO_RULES, NO_LEARNED)).toBe(
+        UNCATEGORIZED,
+      );
+    });
+
+    it("摘要がルールに当たっても、未分類", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      expect(categoryFor(txOf("セブンイレブン", 0), rules, NO_LEARNED)).toBe(
+        UNCATEGORIZED,
+      );
+    });
+
+    it("学習に完全一致のエントリがあっても、未分類", () => {
+      const learned = learnedOf([["セブンイレブン", "食費"]]);
+      expect(categoryFor(txOf("セブンイレブン", 0), NO_RULES, learned)).toBe(
+        UNCATEGORIZED,
+      );
+    });
+
+    it("-0 でも未分類（収入にも支出にも寄らない）", () => {
+      const amountYen = -0;
+      expect(Object.is(amountYen, -0)).toBe(true);
+
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = learnedOf([["セブンイレブン", "交際費"]]);
+
+      const result = categoryFor(txOf("セブンイレブン", amountYen), rules, learned);
+
+      expect(result).not.toBe(INCOME);
+      expect(result).toBe(UNCATEGORIZED);
+    });
+
+    it("+0 と -0 で結果が同じ", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      expect(categoryFor(txOf("セブンイレブン", -0), rules, NO_LEARNED)).toBe(
+        categoryFor(txOf("セブンイレブン", 0), rules, NO_LEARNED),
+      );
+    });
+  });
+
+  describe("支出（負）は従来どおり分類する", () => {
+    it("学習が最優先（ルールより強い）", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = learnedOf([["セブンイレブン渋谷店", "交際費"]]);
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, learned)).toBe(
+        "交際費",
+      );
+    });
+
+    it("学習が無ければルールが当たる（上の対）", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, NO_LEARNED)).toBe(
+        "食費",
+      );
+    });
+
+    it("複数のルールが当たるとき、先頭のルールが勝つ", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費"), ruleOf("イレブン", "雑費")]);
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, NO_LEARNED)).toBe(
+        "食費",
+      );
+    });
+
+    it("ルールの部分一致は大文字小文字を区別しない", () => {
+      const rules = frozenRules([ruleOf("AMAZON", "買い物")]);
+      expect(categoryFor(txOf("Amazon.co.jp", -3000), rules, NO_LEARNED)).toBe(
+        "買い物",
+      );
+    });
+
+    it("学習キーは完全一致でなければ効かない（部分一致では効かない）", () => {
+      const learned = learnedOf([["セブンイレブン", "食費"]]);
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), NO_RULES, learned)).toBe(
+        UNCATEGORIZED,
+      );
+    });
+
+    it("どれにも当たらないとき、未分類", () => {
+      const rules = frozenRules([ruleOf("ローソン", "食費")]);
+      expect(categoryFor(txOf("架空商店ＸＹＺ９９", -1000), rules, NO_LEARNED)).toBe(
+        UNCATEGORIZED,
+      );
+    });
+
+    it("金額が -1 円（境界）でも、支出として分類される", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1), rules, NO_LEARNED)).toBe(
+        "食費",
+      );
+    });
+
+    it("摘要が空文字列でも、空文字列キーの学習が当たる", () => {
+      const learned = learnedOf([["", "手入力"]]);
+      expect(categoryFor(txOf("", -1000), NO_RULES, learned)).toBe("手入力");
+    });
+
+    it("学習されたカテゴリが空文字列でも、その値がそのまま返る", () => {
+      const learned = learnedOf([["セブンイレブン渋谷店", ""]]);
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), NO_RULES, learned)).toBe(
+        "",
+      );
+    });
+
+    it("学習がプロトタイプ由来のキーしか持たないとき、未分類（汚染を拾わない）", () => {
+      const result = categoryFor(txOf("constructor", -1000), NO_RULES, NO_LEARNED);
+      expect(typeof result).toBe("string");
+      expect(result).toBe(UNCATEGORIZED);
+    });
+
+    it.each([
+      ["ルールが当たる", "セブンイレブン渋谷店"],
+      ["学習が完全一致する", "Amazon.co.jp"],
+      ["どれにも当たらない", "架空商店ＸＹＺ９９"],
+      ["空文字列", ""],
+      ["プロトタイプ由来のキー名", "__proto__"],
+    ])(
+      "支出のカテゴリは classifyDescription と同じ結果になる（%s）",
+      (_name, description) => {
+        const rules = frozenRules([
+          ruleOf("セブン", "食費"),
+          ruleOf("イレブン", "雑費"),
+        ]);
+        const learned = learnedOf([["Amazon.co.jp", "書籍"]]);
+
+        expect(categoryFor(txOf(description, -1000), rules, learned)).toBe(
+          classifyDescription(description, rules, learned),
+        );
+      },
+    );
+  });
+
+  describe("符号が結果を決める", () => {
+    it("摘要を固定して符号だけ変えると、結果が3通りに分かれる", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = learnedOf([["セブンイレブン渋谷店", "交際費"]]);
+
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, learned)).toBe(
+        "交際費",
+      );
+      expect(categoryFor(txOf("セブンイレブン渋谷店", 1000), rules, learned)).toBe(
+        INCOME,
+      );
+      expect(categoryFor(txOf("セブンイレブン渋谷店", 0), rules, learned)).toBe(
+        UNCATEGORIZED,
+      );
+    });
+
+    it("編集できない取引（isCategorizable が false）のカテゴリは、摘要に依らない", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = learnedOf([["セブンイレブン渋谷店", "交際費"]]);
+
+      for (const amountYen of [1000, 1, 0, -0]) {
+        expect(isCategorizable({ amountYen })).toBe(false);
+        expect(categoryFor(txOf("セブンイレブン渋谷店", amountYen), rules, learned)).toBe(
+          categoryFor(txOf("架空商店ＸＹＺ９９", amountYen), rules, learned),
+        );
+      }
+    });
+  });
+
+  describe("純粋関数であること", () => {
+    it("rules と learned を書き換えない", () => {
+      const rules: CategoryRule[] = [
+        ruleOf("セブン", "食費"),
+        ruleOf("イレブン", "雑費"),
+      ];
+      const learned = learnedOf([["Amazon.co.jp", "書籍"]]);
+      const rulesSnapshot = rules.map((rule) => ({ ...rule }));
+      const learnedSnapshot = entriesOf(learned);
+
+      categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, learned);
+      categoryFor(txOf("セブンイレブン渋谷店", 1000), rules, learned);
+      categoryFor(txOf("セブンイレブン渋谷店", 0), rules, learned);
+
+      expect(rules).toEqual(rulesSnapshot);
+      expect(entriesOf(learned)).toEqual(learnedSnapshot);
+    });
+
+    it("凍結された取引・rules・learned を渡しても、書き換えを試みない", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = Object.freeze(learnedOf([["Amazon.co.jp", "書籍"]]));
+
+      expect(() =>
+        categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, learned),
+      ).not.toThrow();
+      expect(() =>
+        categoryFor(txOf("セブンイレブン渋谷店", 1000), rules, learned),
+      ).not.toThrow();
+    });
+
+    it("同じ入力で2回呼ぶと、同じ結果になる", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = Object.freeze(learnedOf([["Amazon.co.jp", "書籍"]]));
+
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, learned)).toBe(
+        "食費",
+      );
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, learned)).toBe(
+        "食費",
+      );
+      expect(categoryFor(txOf("給与振込", 250000), rules, learned)).toBe(INCOME);
+      expect(categoryFor(txOf("給与振込", 250000), rules, learned)).toBe(INCOME);
+    });
+
+    it("直前の呼び出しの結果が、次の呼び出しに影響しない", () => {
+      const rules = frozenRules([ruleOf("セブン", "食費")]);
+      const learned = Object.freeze(learnedOf([["Amazon.co.jp", "書籍"]]));
+
+      expect(categoryFor(txOf("給与振込", 250000), rules, learned)).toBe(INCOME);
+      expect(categoryFor(txOf("Amazon.co.jp", -3000), rules, learned)).toBe("書籍");
+      expect(categoryFor(txOf("架空商店ＸＹＺ９９", 0), rules, learned)).toBe(
+        UNCATEGORIZED,
+      );
+      expect(categoryFor(txOf("セブンイレブン渋谷店", -1000), rules, learned)).toBe(
+        "食費",
+      );
     });
   });
 });

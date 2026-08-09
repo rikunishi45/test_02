@@ -5,7 +5,7 @@ import {
   type CashEntryField,
   type CashEntryKind,
 } from "../cash/manual-entry.js";
-import { classifyDescription, type LearnedCategories } from "../category/classify.js";
+import { categoryFor, type LearnedCategories } from "../category/classify.js";
 import { CATEGORIES, DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { toIsoDate } from "../domain/date-parts.js";
 import { putTransactions, setLearnedCategory } from "../storage/db.js";
@@ -58,11 +58,7 @@ export function CashEntryScreen({ db, learned, onSaved }: Props) {
       const stored: StoredTransaction = {
         ...result.transaction,
         id: crypto.randomUUID(),
-        category: classifyDescription(
-          result.transaction.description,
-          DEFAULT_CATEGORY_RULES,
-          learned,
-        ),
+        category: categoryFor(result.transaction, DEFAULT_CATEGORY_RULES, learned),
       };
       await putTransactions(db, [stored]);
 
