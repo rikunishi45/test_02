@@ -139,9 +139,16 @@
         margin: 0;
         font-weight: 650;
       }
+      /* グリッドの子は既定で中身より狭くならない（min-width: auto）。これが無いと、
+         中で overflow-x を持たせた表が縮まずに列を押し出し、ページ全体が横に伸びて
+         右端の操作に手が届かなくなる。 */
+      .pane {
+        min-width: 0;
+      }
       .content {
         padding: 20px 24px 64px;
         max-width: 1100px;
+        min-width: 0;
       }
 
       @media (max-width: 720px) {

@@ -12,6 +12,7 @@ import {
   setLearnedCategory,
   replaceAll,
   putTransactions,
+  deleteTransaction,
 } from "./db.js";
 import { budgetId, type StoredTransaction, type ImportRecord, type NamedColumnMapping } from "./schema.js";
 import { BACKUP_FORMAT_VERSION, type BackupData } from "./backup.js";
@@ -2193,5 +2194,166 @@ describe("putTransactions の原子性", () => {
     await putTransactions(db, [updated]);
 
     expect(byId(await getAllTransactions(db))).toEqual(byId([updated, EXISTING[1]!]));
+  });
+});
+
+describe("deleteTransaction", () => {
+  it("指定した1件を消す", async () => {
+    const db = await freshDatabase();
+    await seed(db, {
+      transactions: [transactionOf({ id: "a" }), transactionOf({ id: "b" })],
+    });
+
+    await deleteTransaction(db, "a");
+
+    expect((await getAllTransactions(db)).map((t) => t.id)).toEqual(["b"]);
+  });
+
+  it("消した1件以外は、内容まで含めてそのまま残る", async () => {
+    const db = await freshDatabase();
+    const keep = [
+      transactionOf({ id: "keep-1", category: "食費", memo: "昼" }),
+      transactionOf({ id: "keep-2", category: "交通費", amountYen: -220 }),
+    ];
+    await seed(db, { transactions: [...keep, transactionOf({ id: "gone" })] });
+
+    await deleteTransaction(db, "gone");
+
+    expect(byId(await getAllTransactions(db))).toEqual(byId(keep));
+  });
+
+  it("1件だけのデータベースを空にできる", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: [transactionOf({ id: "only" })] });
+
+    await deleteTransaction(db, "only");
+
+    expect(await getAllTransactions(db)).toEqual([]);
+  });
+
+  it("消えるのはちょうど1件（同じ日付・同じ金額の行が巻き添えにならない）", async () => {
+    const db = await freshDatabase();
+    const twin = { date: "2026-03-03", amountYen: -1000, description: "同じ店" };
+    await seed(db, {
+      transactions: [
+        transactionOf({ id: "x", ...twin }),
+        transactionOf({ id: "y", ...twin }),
+        transactionOf({ id: "z", ...twin }),
+      ],
+    });
+
+    await deleteTransaction(db, "y");
+
+    expect((await getAllTransactions(db)).map((t) => t.id).sort()).toEqual(["x", "z"]);
+  });
+
+  describe("存在しない id", () => {
+    it("失敗しない", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a" })] });
+
+      await expect(deleteTransaction(db, "missing")).resolves.toBeUndefined();
+    });
+
+    it("他の取引を消さない", async () => {
+      const db = await freshDatabase();
+      const existing = [transactionOf({ id: "a" }), transactionOf({ id: "b" })];
+      await seed(db, { transactions: existing });
+
+      await deleteTransaction(db, "missing");
+
+      expect(byId(await getAllTransactions(db))).toEqual(byId(existing));
+    });
+
+    it("空のデータベースでも失敗しない", async () => {
+      const db = await freshDatabase();
+
+      await expect(deleteTransaction(db, "missing")).resolves.toBeUndefined();
+
+      expect(await getAllTransactions(db)).toEqual([]);
+    });
+
+    it("空文字列の id でも失敗せず、何も消えない", async () => {
+      const db = await freshDatabase();
+      const existing = [transactionOf({ id: "a" })];
+      await seed(db, { transactions: existing });
+
+      await expect(deleteTransaction(db, "")).resolves.toBeUndefined();
+
+      expect(await getAllTransactions(db)).toEqual(existing);
+    });
+  });
+
+  describe("繰り返し", () => {
+    it("同じ id を2回消しても失敗しない（2回目は何も起きない）", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a" }), transactionOf({ id: "b" })] });
+
+      await deleteTransaction(db, "a");
+      await expect(deleteTransaction(db, "a")).resolves.toBeUndefined();
+
+      expect((await getAllTransactions(db)).map((t) => t.id)).toEqual(["b"]);
+    });
+
+    it("順に呼べば複数件を消せる", async () => {
+      const db = await freshDatabase();
+      await seed(db, {
+        transactions: [
+          transactionOf({ id: "a" }),
+          transactionOf({ id: "b" }),
+          transactionOf({ id: "c" }),
+        ],
+      });
+
+      await deleteTransaction(db, "a");
+      await deleteTransaction(db, "c");
+
+      expect((await getAllTransactions(db)).map((t) => t.id)).toEqual(["b"]);
+    });
+
+    it("消したあと、同じ id で入れ直せる", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a", category: "食費" })] });
+
+      await deleteTransaction(db, "a");
+      const revived = transactionOf({ id: "a", category: "交通費" });
+      await putTransactions(db, [revived]);
+
+      expect(await getAllTransactions(db)).toEqual([revived]);
+    });
+  });
+
+  describe("他のストアに触らない", () => {
+    it("取り込み履歴と列マッピングは残る", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a" })] });
+      const importsBefore = await getAllImports(db);
+      const mappingsBefore = await getAllColumnMappings(db);
+
+      await deleteTransaction(db, "a");
+
+      expect(await getAllImports(db)).toEqual(importsBefore);
+      expect(await getAllColumnMappings(db)).toEqual(mappingsBefore);
+    });
+
+    it("学習したカテゴリは残る", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a", description: "店A" })] });
+      await seedLearned(db, learnedOf([["店A", "食費"]]));
+
+      await deleteTransaction(db, "a");
+
+      expect(await getLearnedCategories(db)).toEqual(learnedOf([["店A", "食費"]]));
+    });
+
+    it("カテゴリのマスタは残る", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a" })] });
+      const categoriesBefore = await getAllCategories(db);
+
+      await deleteTransaction(db, "a");
+
+      expect(await getAllCategories(db)).toEqual(categoriesBefore);
+    });
   });
 });

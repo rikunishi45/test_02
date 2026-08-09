@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildManualTransaction } from "./manual-entry.js";
+import { buildManualTransaction, toManualEntryInput } from "./manual-entry.js";
 import type {
   ManualEntryError,
   ManualEntryField,
@@ -8,6 +8,8 @@ import type {
   ManualEntryResult,
 } from "./manual-entry.js";
 import type { Transaction, TransactionSource } from "../domain/transaction.js";
+import type { StoredTransaction } from "../storage/schema.js";
+import { pressKey } from "./keypad.js";
 
 /** 既定はすべて有効な入力。検査したい項目だけ差し替える */
 const inputOf = (overrides: Partial<ManualEntryInput> = {}): ManualEntryInput => ({
@@ -1099,5 +1101,174 @@ describe("buildManualTransaction", () => {
         expect(Math.abs(transaction.amountYen)).toBe(1234567);
       });
     });
+  });
+});
+
+describe("toManualEntryInput", () => {
+  const stored = (overrides: Partial<StoredTransaction> = {}): StoredTransaction => ({
+    id: "t-1",
+    date: "2026-08-09",
+    amountYen: -1200,
+    description: "コンビニ",
+    source: "cash",
+    category: "食費",
+    memo: "",
+    ...overrides,
+  });
+
+  describe("符号を種別と大きさに分解する", () => {
+    it("支出（負）は kind=expense と正の金額になる", () => {
+      const input = toManualEntryInput(stored({ amountYen: -1200 }));
+
+      expect([input.kind, input.amount]).toEqual(["expense", "1200"]);
+    });
+
+    it("収入（正）は kind=income と正の金額になる", () => {
+      const input = toManualEntryInput(stored({ amountYen: 250000 }));
+
+      expect([input.kind, input.amount]).toEqual(["income", "250000"]);
+    });
+
+    it("金額に符号が残らない", () => {
+      expect(toManualEntryInput(stored({ amountYen: -1200 })).amount).not.toContain("-");
+    });
+
+    it("1円の支出も 1 になる（境界）", () => {
+      expect(toManualEntryInput(stored({ amountYen: -1 })).amount).toBe("1");
+    });
+
+    it("1円の収入も 1 になる（境界）", () => {
+      const input = toManualEntryInput(stored({ amountYen: 1 }));
+
+      expect([input.kind, input.amount]).toEqual(["income", "1"]);
+    });
+
+    it("大きな額でも指数表記にならない", () => {
+      expect(toManualEntryInput(stored({ amountYen: -123456789 })).amount).toBe("123456789");
+    });
+  });
+
+  describe("0 円", () => {
+    it("kind は expense になる", () => {
+      expect(toManualEntryInput(stored({ amountYen: 0 })).kind).toBe("expense");
+    });
+
+    it("金額は 0 になる", () => {
+      expect(toManualEntryInput(stored({ amountYen: 0 })).amount).toBe("0");
+    });
+
+    it("-0 でも +0 と同じ結果になる（入力欄に -0 が出ない）", () => {
+      expect(toManualEntryInput(stored({ amountYen: -0 }))).toEqual(
+        toManualEntryInput(stored({ amountYen: 0 })),
+      );
+    });
+
+    it("-0 の金額は \"0\" で、\"-0\" にならない", () => {
+      expect(toManualEntryInput(stored({ amountYen: -0 })).amount).toBe("0");
+    });
+
+    it("0 円のまま保存しようとすると金額のエラーになる（直す機会になる）", () => {
+      const input = toManualEntryInput(stored({ amountYen: 0 }));
+
+      expect(failedFields(buildManualTransaction(input))).toEqual(["amount"]);
+    });
+  });
+
+  describe("そのまま移す項目", () => {
+    it("日付をそのまま渡す", () => {
+      expect(toManualEntryInput(stored({ date: "2024-02-29" })).date).toBe("2024-02-29");
+    });
+
+    it("摘要をそのまま渡す（trim しない。編集で消せる）", () => {
+      expect(toManualEntryInput(stored({ description: " コンビニ " })).description).toBe(
+        " コンビニ ",
+      );
+    });
+
+    it.each(["cash", "card", "bank"] as const)("支払い方法 %s をそのまま渡す", (source) => {
+      expect(toManualEntryInput(stored({ source })).source).toBe(source);
+    });
+
+    it("メモをそのまま渡す", () => {
+      expect(toManualEntryInput(stored({ memo: "会社の飲み会" })).memo).toBe("会社の飲み会");
+    });
+
+    it("空のメモは空文字列のまま", () => {
+      expect(toManualEntryInput(stored({ memo: "" })).memo).toBe("");
+    });
+
+    it("id と category は入力に含まれない（編集で失われる値ではない）", () => {
+      const input = toManualEntryInput(stored());
+
+      expect(Object.keys(input).sort()).toEqual([
+        "amount",
+        "date",
+        "description",
+        "kind",
+        "memo",
+        "source",
+      ]);
+    });
+  });
+
+  describe("buildManualTransaction と往復する", () => {
+    it.each([
+      ["支出", -1200],
+      ["収入", 250000],
+      ["1円の支出", -1],
+    ])("%s は、ほどいて組み立て直すと元の取引に戻る", (_label, amountYen) => {
+      const original = stored({ amountYen });
+      const result = buildManualTransaction(toManualEntryInput(original));
+
+      expect(expectSuccess(result)).toEqual({
+        date: original.date,
+        amountYen,
+        description: original.description,
+        source: original.source,
+      });
+    });
+
+    it("往復してもメモが保たれる", () => {
+      const original = stored({ memo: "会社の飲み会" });
+      const result = buildManualTransaction(toManualEntryInput(original));
+
+      expect(result.ok && result.memo).toBe("会社の飲み会");
+    });
+
+    it("往復で符号が反転しない（支出が収入にならない）", () => {
+      const original = stored({ amountYen: -1200 });
+      const once = expectSuccess(buildManualTransaction(toManualEntryInput(original)));
+      const twice = expectSuccess(
+        buildManualTransaction(toManualEntryInput({ ...original, ...once })),
+      );
+
+      expect(twice.amountYen).toBe(-1200);
+    });
+
+    it("何度往復しても金額が変わらない", () => {
+      let current: StoredTransaction = stored({ amountYen: 250000 });
+      for (let i = 0; i < 3; i += 1) {
+        const built = expectSuccess(buildManualTransaction(toManualEntryInput(current)));
+        current = { ...current, ...built };
+      }
+
+      expect(current.amountYen).toBe(250000);
+    });
+
+    it("金額の区切り記号を入れない（テンキーの続きが打てる形）", () => {
+      const amount = toManualEntryInput(stored({ amountYen: -1234567 })).amount;
+
+      expect(amount).toBe("1234567");
+      expect(pressKey(amount, "8")).toBe("12345678");
+    });
+  });
+
+  it("渡した取引を書き換えない", () => {
+    const original = stored({ amountYen: -1200, memo: " 昼 " });
+    const snapshot = structuredClone(original);
+
+    toManualEntryInput(original);
+
+    expect(original).toEqual(snapshot);
   });
 });

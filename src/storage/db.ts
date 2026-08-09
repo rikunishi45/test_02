@@ -181,6 +181,25 @@ export async function putTransactions(
 }
 
 /**
+ * 取引を1件消す。**取り消せない。** 呼ぶ前に人間の確認を取ること。
+ *
+ * 存在しない id を渡しても失敗しない（IndexedDB の `delete` は該当なしでも
+ * 成功する）。「消えていること」が求める結果で、それは既に満たされている——
+ * 呼び出し側に「消す前に存在を確かめる」経路を作らせない。2つの画面から
+ * 同じ行を消したときに、片方だけがエラーになる理由も無い。
+ *
+ * まとめて消す口は作らない。全消しは `replaceAll`（バックアップからの復元）
+ * が持っていて、それ以外に複数件を一度に失う操作を増やさない。
+ */
+export async function deleteTransaction(db: IDBDatabase, id: string): Promise<void> {
+  const tx = db.transaction(STORE_TRANSACTIONS, "readwrite");
+  const store = tx.objectStore(STORE_TRANSACTIONS);
+  await writeAll(tx, () => {
+    store.delete(id);
+  });
+}
+
+/**
  * 1回の取り込みを丸ごと保存する。取引・取り込み履歴・使った列マッピングを
  * 1つのトランザクションで書く。
  *

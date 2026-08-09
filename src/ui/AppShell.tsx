@@ -53,7 +53,7 @@ export function AppShell({
         ))}
       </nav>
 
-      <div>
+      <div className="pane">
         <header className="topbar">
           <h1>{title}</h1>
         </header>
