@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { reclassifyTransactions } from "./reclassify.js";
 import {
+  INCOME,
   UNCATEGORIZED,
   type CategoryRule,
   type LearnedCategories,
@@ -237,18 +238,22 @@ describe("reclassifyTransactions", () => {
       });
     });
 
-    it("金額が 0 や正（収入）でも、そのまま残る", () => {
-      const rules = rulesOf(["給与", "収入"]);
+    it("金額が 0 や正（収入）でも、amountYen と source がそのまま残る", () => {
+      // ルールのカテゴリは "収入" 以外にしてある。ルールが適用されていれば
+      // "給与所得" になるので、収入がルールを見ていないことも同時に分かる。
+      const rules = rulesOf(["給与", "給与所得"]);
       const input = frozen([
         tx("t1", "給与振込", UNCATEGORIZED, { amountYen: 250000, source: "bank" }),
-        tx("t2", "給与調整", UNCATEGORIZED, { amountYen: 0, source: "bank" }),
+        tx("t2", "給与調整", "食費", { amountYen: 0, source: "bank" }),
       ]);
 
       const result = reclassifyTransactions(input, rules, NO_LEARNED);
 
-      expect(result.map((item) => [item.amountYen, item.source])).toEqual([
-        [250000, "bank"],
-        [0, "bank"],
+      expect(
+        result.map((item) => [item.amountYen, item.source, item.category]),
+      ).toEqual([
+        [250000, "bank", INCOME],
+        [0, "bank", UNCATEGORIZED],
       ]);
     });
 
@@ -309,6 +314,186 @@ describe("reclassifyTransactions", () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]?.category).toBe("");
+    });
+  });
+
+  describe("収入は分類しない", () => {
+    it("収入の取引は、摘要がルールに当たっても収入カテゴリになる", () => {
+      const rules = rulesOf(["セブンイレブン", "食費"]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: 1000 }),
+      ]);
+
+      const result = reclassifyTransactions(input, rules, NO_LEARNED);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.category).toBe(INCOME);
+    });
+
+    it("収入の取引は、学習に完全一致のエントリがあっても収入カテゴリになる", () => {
+      const learned = learnedOf([["セブンイレブン渋谷店", "交際費"]]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: 1000 }),
+      ]);
+
+      const result = reclassifyTransactions(input, NO_RULES, learned);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.category).toBe(INCOME);
+    });
+
+    it("収入の取引でも、category 以外のフィールドはすべて保たれる", () => {
+      const rules = rulesOf(["給与", "給与所得"]);
+      const input = frozen([
+        tx("tx-0002", "給与振込", UNCATEGORIZED, {
+          date: "2026-02-29",
+          amountYen: 250000,
+          source: "bank",
+        }),
+      ]);
+
+      const result = reclassifyTransactions(input, rules, NO_LEARNED);
+
+      expect(result[0]).toEqual({
+        id: "tx-0002",
+        date: "2026-02-29",
+        amountYen: 250000,
+        description: "給与振込",
+        source: "bank",
+        category: INCOME,
+      });
+    });
+
+    it("既に収入カテゴリが入っている収入の取引は、変わっていないので返らない", () => {
+      const rules = rulesOf(["セブンイレブン", "食費"]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", INCOME, { amountYen: 1000 }),
+      ]);
+
+      expect(reclassifyTransactions(input, rules, NO_LEARNED)).toEqual([]);
+    });
+
+    it("収入の取引に別のカテゴリが入っていれば、収入カテゴリに直して返る（上の対）", () => {
+      const rules = rulesOf(["セブンイレブン", "食費"]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", "食費", { amountYen: 1000 }),
+      ]);
+
+      const result = reclassifyTransactions(input, rules, NO_LEARNED);
+
+      expect(result.map((item) => [item.id, item.category])).toEqual([["t1", INCOME]]);
+    });
+
+    it("金額 1 円（境界）の取引も収入カテゴリになる", () => {
+      const rules = rulesOf(["セブンイレブン", "食費"]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: 1 }),
+      ]);
+
+      expect(reclassifyTransactions(input, rules, NO_LEARNED)[0]?.category).toBe(INCOME);
+    });
+
+    it("支出と収入が混ざっていても、支出だけが摘要どおりに分類される", () => {
+      const rules = rulesOf(["セブンイレブン", "食費"], ["給与", "給与所得"]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: -1000 }),
+        tx("t2", "給与振込", UNCATEGORIZED, { amountYen: 250000 }),
+        tx("t3", "架空商店ＸＹＺ９９", "食費", { amountYen: -500 }),
+        tx("t4", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: 3000 }),
+      ]);
+
+      const result = reclassifyTransactions(input, rules, NO_LEARNED);
+
+      expect(result.map((item) => [item.id, item.category])).toEqual([
+        ["t1", "食費"],
+        ["t2", INCOME],
+        ["t3", UNCATEGORIZED],
+        ["t4", INCOME],
+      ]);
+    });
+
+    it("同じ摘要の支出と収入があるとき、学習は支出だけに効く", () => {
+      const learned = learnedOf([["セブンイレブン渋谷店", "交際費"]]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: -1000 }),
+        tx("t2", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: 1000 }),
+      ]);
+
+      const result = reclassifyTransactions(input, NO_RULES, learned);
+
+      expect(result.map((item) => [item.id, item.category])).toEqual([
+        ["t1", "交際費"],
+        ["t2", INCOME],
+      ]);
+    });
+
+    it("同じ摘要の学習を付け替えても、動くのは支出だけで収入は動かない", () => {
+      // 塞いだ穴そのもの。学習は摘要をキーにし符号を持たないので、
+      // 以前はここで収入側まで一緒に動いていた。
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", UNCATEGORIZED, { amountYen: -1000 }),
+        tx("t2", "セブンイレブン渋谷店", INCOME, { amountYen: 1000 }),
+      ]);
+
+      const before = reclassifyTransactions(
+        input,
+        NO_RULES,
+        learnedOf([["セブンイレブン渋谷店", "交際費"]]),
+      );
+      const after = reclassifyTransactions(
+        input,
+        NO_RULES,
+        learnedOf([["セブンイレブン渋谷店", "雑費"]]),
+      );
+
+      // 収入（t2）はどちらでも変更なし＝返らない。支出（t1）だけが学習に従う
+      expect(before.map((item) => [item.id, item.category])).toEqual([
+        ["t1", "交際費"],
+      ]);
+      expect(after.map((item) => [item.id, item.category])).toEqual([["t1", "雑費"]]);
+    });
+  });
+
+  describe("0 円は収入にも支出にも寄せない", () => {
+    it("0 円の取引は未分類になる", () => {
+      const input = frozen([
+        tx("t1", "給与調整", "食費", { amountYen: 0, source: "bank" }),
+      ]);
+
+      const result = reclassifyTransactions(input, NO_RULES, NO_LEARNED);
+
+      expect(result.map((item) => [item.id, item.category])).toEqual([
+        ["t1", UNCATEGORIZED],
+      ]);
+    });
+
+    it("0 円の取引は、摘要がルールや学習に当たっても未分類になる", () => {
+      const rules = rulesOf(["セブンイレブン", "食費"]);
+      const learned = learnedOf([["セブンイレブン渋谷店", "交際費"]]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", "食費", { amountYen: 0 }),
+      ]);
+
+      const result = reclassifyTransactions(input, rules, learned);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.category).toBe(UNCATEGORIZED);
+    });
+
+    it("-0 円の取引も未分類になり、金額はそのまま残る", () => {
+      const rules = rulesOf(["セブンイレブン", "食費"]);
+      const input = frozen([
+        tx("t1", "セブンイレブン渋谷店", "食費", { amountYen: -0 }),
+      ]);
+      // フィクスチャが本当に -0 であることを先に固定する
+      expect(Object.is(input[0]?.amountYen, -0)).toBe(true);
+
+      const result = reclassifyTransactions(input, rules, NO_LEARNED);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.category).toBe(UNCATEGORIZED);
+      expect(result[0]?.category).not.toBe(INCOME);
+      expect(Object.is(result[0]?.amountYen, -0)).toBe(true);
     });
   });
 

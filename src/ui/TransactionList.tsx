@@ -1,4 +1,4 @@
-import { UNCATEGORIZED } from "../category/classify.js";
+import { isCategorizable, UNCATEGORIZED } from "../category/classify.js";
 import { CATEGORIES } from "../category/default-rules.js";
 import type { StoredTransaction } from "../storage/schema.js";
 
@@ -40,19 +40,28 @@ export function TransactionList({ transactions, onCategoryChange }: Props) {
           <tr key={t.id}>
             <td style={styles.td}>{t.date}</td>
             <td style={styles.td}>{t.description}</td>
+            {/*
+              編集欄を出すのは支出だけ。判定は壁の中（isCategorizable）にあり、
+              ここで符号を見て書き直さない。学習のキーは摘要だけで符号を持たないので、
+              収入のカテゴリを直せると同じ摘要の支出まで動く。
+            */}
             <td style={styles.td}>
-              <select
-                value={t.category}
-                onChange={(e) => onCategoryChange(t.description, e.target.value)}
-                style={t.category === UNCATEGORIZED ? styles.selectUncategorized : styles.select}
-              >
-                <option value={UNCATEGORIZED}>{UNCATEGORIZED}</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+              {isCategorizable(t) ? (
+                <select
+                  value={t.category}
+                  onChange={(e) => onCategoryChange(t.description, e.target.value)}
+                  style={t.category === UNCATEGORIZED ? styles.selectUncategorized : styles.select}
+                >
+                  <option value={UNCATEGORIZED}>{UNCATEGORIZED}</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span style={styles.fixedCategory}>{t.category}</span>
+              )}
             </td>
             <td style={styles.td}>{SOURCE_LABEL[t.source]}</td>
             <td style={{ ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
@@ -75,6 +84,7 @@ const styles = {
   },
   td: { borderBottom: "1px solid var(--line)", padding: "6px 8px" },
   select: { fontSize: 13, padding: "2px 4px" },
+  fixedCategory: { fontSize: 13, color: "var(--muted)" },
   // 未分類は目で拾えるようにする。ルールを足す対象がここに集まる。
   selectUncategorized: {
     fontSize: 13,

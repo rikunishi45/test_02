@@ -1,5 +1,5 @@
 import type { StoredTransaction } from "../storage/schema.js";
-import { classifyDescription, type CategoryRule, type LearnedCategories } from "./classify.js";
+import { categoryFor, type CategoryRule, type LearnedCategories } from "./classify.js";
 
 /**
  * 保存済みの取引を今のルールと学習で分類し直し、**カテゴリが変わったものだけ**を返す。
@@ -17,7 +17,7 @@ export function reclassifyTransactions(
 ): StoredTransaction[] {
   const changed: StoredTransaction[] = [];
   for (const transaction of transactions) {
-    const category = classifyDescription(transaction.description, rules, learned);
+    const category = categoryFor(transaction, rules, learned);
     if (category !== transaction.category) {
       changed.push({ ...transaction, category });
     }

@@ -1,6 +1,10 @@
+import type { Transaction } from "../domain/transaction.js";
 import { normalizeDescription } from "./normalize.js";
 
 export const UNCATEGORIZED = "未分類";
+
+/** 収入のカテゴリ。`sumByCategory` は収入を集計に入れないので内訳には現れない */
+export const INCOME = "収入";
 
 export interface CategoryRule {
   /** 摘要にこの文字列が含まれるかで判定する。空文字列のルールはマッチしない */
@@ -54,5 +58,42 @@ export function classifyDescription(
     }
   }
 
+  return UNCATEGORIZED;
+}
+
+/**
+ * カテゴリを人間が編集してよい取引か。**支出だけが対象。**
+ *
+ * 画面はこの判定を自分で書かない。編集欄を出すかどうかと、`categoryFor` が
+ * 分類するかどうかは同じ条件で動く必要があり、二重に書くと片方だけずれる。
+ */
+export function isCategorizable(transaction: Pick<Transaction, "amountYen">): boolean {
+  return transaction.amountYen < 0;
+}
+
+/**
+ * 取引1件のカテゴリを決める。**収入は分類しない。**
+ *
+ * 学習（`LearnedCategories`）のキーは摘要だけで符号を持たない。収入にカテゴリを
+ * 付けられるようにすると、収入の分類を直したときに同じ摘要の**支出**まで動く。
+ * 画面には「直していない行が変わった」としか出ないので、見て気づけない。
+ *
+ * 分類が要るのはそもそも支出だけでもある——`sumByCategory` は収入を集計に
+ * 入れない（「カテゴリは支出の内訳を見るためのもの」）。
+ *
+ * 金額 0 は支出でも収入でもないので、どちらにも寄せず未分類にする。`-0` も
+ * ここに落ちる（`-0 > 0` も `-0 < 0` も偽）。三分岐は `sumByPeriod` と同じ形。
+ */
+export function categoryFor(
+  transaction: Pick<Transaction, "description" | "amountYen">,
+  rules: readonly CategoryRule[],
+  learned: LearnedCategories,
+): string {
+  if (transaction.amountYen > 0) {
+    return INCOME;
+  }
+  if (transaction.amountYen < 0) {
+    return classifyDescription(transaction.description, rules, learned);
+  }
   return UNCATEGORIZED;
 }

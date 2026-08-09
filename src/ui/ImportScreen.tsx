@@ -4,7 +4,7 @@ import { parseCsv } from "../csv/parse-csv.js";
 import { applyMapping, type RowError } from "../csv/column-mapping.js";
 import { classifyForImport, type ClassifiedTransaction } from "../import/classify-duplicates.js";
 import { isSelectedForImport } from "../import/selection.js";
-import { classifyDescription, type LearnedCategories } from "../category/classify.js";
+import { categoryFor, type LearnedCategories } from "../category/classify.js";
 import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { getAllColumnMappings, saveImport } from "../storage/db.js";
 import type { NamedColumnMapping, StoredTransaction } from "../storage/schema.js";
@@ -100,7 +100,7 @@ export function ImportScreen({ db, existing, learned, onImported }: Props) {
     const stored: StoredTransaction[] = chosen.map((entry) => ({
       ...entry.transaction,
       id: crypto.randomUUID(),
-      category: classifyDescription(entry.transaction.description, DEFAULT_CATEGORY_RULES, learned),
+      category: categoryFor(entry.transaction, DEFAULT_CATEGORY_RULES, learned),
     }));
 
     await saveImport(
