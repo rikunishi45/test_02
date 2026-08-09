@@ -6,18 +6,32 @@ import { reclassifyTransactions } from "../category/reclassify.js";
 import type { StoredTransaction } from "../storage/schema.js";
 import { useDatabase } from "./useDatabase.js";
 import { usePersistence } from "./usePersistence.js";
+import { AppShell, type NavItem } from "./AppShell.js";
+import { PersistenceBanner } from "./PersistenceBanner.js";
 import { ImportScreen } from "./ImportScreen.js";
 import { CashEntryScreen } from "./CashEntryScreen.js";
 import { TransactionList } from "./TransactionList.js";
 import { SummaryScreen } from "./SummaryScreen.js";
 import { BackupPanel } from "./BackupPanel.js";
 
-type Tab = "summary" | "list" | "import" | "cash";
+/**
+ * 画面。ホームとカレンダーはまだ無い（段階6・段階2で足す）。
+ * 順番はサイドバーの並びと同じ。
+ */
+type Tab = "report" | "list" | "cash" | "import" | "settings";
+
+const TITLES: Record<Tab, string> = {
+  report: "レポート",
+  list: "取引一覧",
+  cash: "取引を入力",
+  import: "取り込み",
+  settings: "設定",
+};
 
 export function App() {
   const database = useDatabase();
   const persistence = usePersistence();
-  const [tab, setTab] = useState<Tab>("summary");
+  const [tab, setTab] = useState<Tab>("report");
   const [transactions, setTransactions] = useState<StoredTransaction[]>([]);
   const [learned, setLearned] = useState<LearnedCategories>({});
 
@@ -63,53 +77,37 @@ export function App() {
   }, [reload]);
 
   if (database.status === "loading") {
-    return <main style={styles.main}>読み込み中…</main>;
+    return <p style={styles.plain}>読み込み中…</p>;
   }
   if (database.status === "error") {
-    return <main style={styles.main}>データベースを開けませんでした: {database.message}</main>;
+    return <p style={styles.plain}>データベースを開けませんでした: {database.message}</p>;
   }
 
+  const items: NavItem[] = [
+    { id: "report", label: "レポート" },
+    { id: "list", label: "取引一覧", count: transactions.length },
+    { id: "cash", label: "取引を入力" },
+    { id: "import", label: "取り込み", separatorBefore: true },
+    { id: "settings", label: "設定" },
+  ];
+
   return (
-    <main style={styles.main}>
-      <h1 style={styles.title}>家計簿</h1>
-
-      <nav style={styles.nav}>
-        <button
-          type="button"
-          onClick={() => setTab("summary")}
-          style={tab === "summary" ? styles.tabActive : styles.tab}
-        >
-          集計
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("list")}
-          style={tab === "list" ? styles.tabActive : styles.tab}
-        >
-          一覧（{transactions.length}件）
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("import")}
-          style={tab === "import" ? styles.tabActive : styles.tab}
-        >
-          CSV取り込み
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("cash")}
-          style={tab === "cash" ? styles.tabActive : styles.tab}
-        >
-          現金入力
-        </button>
-      </nav>
-
-      {tab === "summary" && <SummaryScreen transactions={transactions} />}
+    <AppShell
+      items={items}
+      active={tab}
+      onSelect={(id) => setTab(id as Tab)}
+      title={TITLES[tab]}
+      banner={<PersistenceBanner state={persistence} />}
+    >
+      {tab === "report" && <SummaryScreen transactions={transactions} />}
       {tab === "list" && (
         <TransactionList
           transactions={transactions}
           onCategoryChange={(description, category) => void changeCategory(description, category)}
         />
+      )}
+      {tab === "cash" && (
+        <CashEntryScreen db={database.db} learned={learned} onSaved={reload} />
       )}
       {tab === "import" && (
         <ImportScreen
@@ -119,30 +117,11 @@ export function App() {
           onImported={reload}
         />
       )}
-      {tab === "cash" && (
-        <CashEntryScreen db={database.db} learned={learned} onSaved={reload} />
-      )}
-
-      <BackupPanel db={database.db} persistence={persistence} onRestored={reload} />
-    </main>
+      {tab === "settings" && <BackupPanel db={database.db} onRestored={reload} />}
+    </AppShell>
   );
 }
 
 const styles = {
-  main: {
-    fontFamily: "system-ui, sans-serif",
-    maxWidth: 960,
-    margin: "0 auto",
-    padding: 24,
-  },
-  title: { fontSize: 20, margin: "0 0 16px" },
-  nav: { display: "flex", gap: 8, marginBottom: 16 },
-  tab: { padding: "6px 14px", borderRadius: 6 },
-  tabActive: {
-    padding: "6px 14px",
-    borderRadius: 6,
-    background: "var(--accent)",
-    color: "var(--accent-fg)",
-    borderColor: "var(--accent)",
-  },
+  plain: { padding: 24 },
 } as const;

@@ -9,30 +9,21 @@ import {
   getLearnedCategories,
   replaceAll,
 } from "../storage/db.js";
-import type { PersistenceState } from "../storage/persistence.js";
-
-const PERSISTENCE_WARNING: Record<Exclude<PersistenceState, "persisted">, string> = {
-  denied:
-    "このブラウザは永続化を許可していません。ストレージが逼迫すると、ここのデータは予告なく消えることがあります。",
-  unsupported:
-    "このブラウザでは永続化を要求できません（HTTPS でないページでは無効です）。データは予告なく消えることがあります。",
-};
-
 /**
  * バックアップの書き出しと復元。
  *
  * IndexedDBは永続保証が無く、ブラウザのデータ削除やストレージ逼迫で消える。
  * 元のCSVを取っておいても、手動入力とカテゴリの修正は戻らない。
  * だからアプリ自身のデータを書き出せる経路が要る。
+ *
+ * 永続化の警告はここではなく `PersistenceBanner` が全画面に出す。この画面を
+ * 見に来た人だけが知ればよい情報ではないため。
  */
 export function BackupPanel({
   db,
-  persistence,
   onRestored,
 }: {
   db: IDBDatabase;
-  /** 永続化の要求結果。まだ返ってきていない間は null */
-  persistence: PersistenceState | null;
   onRestored: () => void;
 }) {
   const [message, setMessage] = useState("");
@@ -85,17 +76,13 @@ export function BackupPanel({
   }
 
   return (
-    <section style={styles.section}>
+    <section>
       <h2 style={styles.h2}>バックアップ</h2>
       <p style={styles.note}>
         データはこのブラウザの中だけに保存されます。ブラウザのデータを消すと失われるので、
         ときどき書き出しておいてください。
       </p>
 
-      {/* 要求が返る前（null）と、許可された場合は何も出さない。 */}
-      {persistence !== null && persistence !== "persisted" && (
-        <p style={styles.warn}>{PERSISTENCE_WARNING[persistence]}</p>
-      )}
       <p style={styles.row}>
         <button type="button" onClick={() => void exportBackup()}>
           書き出す（JSON）
@@ -121,7 +108,6 @@ export function BackupPanel({
 }
 
 const styles = {
-  section: { marginTop: 40, paddingTop: 16, borderTop: "1px solid var(--line)" },
   h2: { fontSize: 15, margin: "0 0 8px" },
   note: { fontSize: 13, color: "var(--muted)", margin: "0 0 8px" },
   warn: { fontSize: 13, color: "var(--danger)", margin: "8px 0 0" },
