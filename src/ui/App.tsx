@@ -16,7 +16,7 @@ import { usePersistence } from "./usePersistence.js";
 import { AppShell, type NavItem } from "./AppShell.js";
 import { PersistenceBanner } from "./PersistenceBanner.js";
 import { ImportScreen } from "./ImportScreen.js";
-import { CashEntryScreen } from "./CashEntryScreen.js";
+import { EntryScreen } from "./EntryScreen.js";
 import { CalendarScreen } from "./CalendarScreen.js";
 import { TransactionList } from "./TransactionList.js";
 import { SummaryScreen } from "./SummaryScreen.js";
@@ -120,7 +120,7 @@ export function App() {
         />
       )}
       {tab === "cash" && (
-        <CashEntryScreen db={database.db} learned={learned} onSaved={reload} />
+        <EntryScreen db={database.db} learned={learned} onSaved={reload} />
       )}
       {tab === "calendar" && (
         <CalendarScreen transactions={transactions} categories={categories} />
