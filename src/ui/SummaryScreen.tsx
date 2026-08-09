@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   inMonth,
+  monthOf,
   negateExpense,
   sumByCategory,
   sumByDay,
@@ -9,6 +10,13 @@ import {
 } from "../aggregate/period.js";
 import { monthGrid, type CalendarCell } from "../calendar/month-grid.js";
 import { layoutBars, maxOf, niceScale, yOf } from "../chart/bar-chart.js";
+import { toIsoDate } from "../domain/date-parts.js";
+import {
+  detectRecurring,
+  MIN_MONTHS,
+  totalMonthlyYen,
+  type RecurringCharge,
+} from "../recurring/detect.js";
 import type { StoredTransaction } from "../storage/schema.js";
 
 const YEN = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY" });
@@ -72,7 +80,58 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
           </tbody>
         </table>
       )}
+
+      <RecurringPanel transactions={transactions} />
     </section>
+  );
+}
+
+/**
+ * 固定費・サブスクの一覧。
+ *
+ * 表示している月ではなく**今月**を基準にする。解約済みを落とす判定
+ * （`detectRecurring` の `throughMonth`）が「今も落ちているか」を見るもので、
+ * 過去の月を眺めているときに一覧が入れ替わると意味が変わってしまう。
+ */
+function RecurringPanel({ transactions }: { transactions: StoredTransaction[] }) {
+  const charges = detectRecurring(transactions, monthOf(toIsoDate(new Date())));
+
+  return (
+    <>
+      <h2 style={styles.h2}>
+        固定費・サブスク
+        {charges.length > 0 && (
+          <span style={styles.total}>{YEN.format(negateExpense(totalMonthlyYen(charges)))}/月</span>
+        )}
+      </h2>
+      {charges.length === 0 ? (
+        <p style={styles.income}>
+          {MIN_MONTHS}か月以上つづけて、ほぼ同額で落ちている支出はまだありません。
+        </p>
+      ) : (
+        <table style={styles.table}>
+          <tbody>
+            {charges.map((charge) => (
+              <RecurringRow key={charge.description} charge={charge} />
+            ))}
+          </tbody>
+        </table>
+      )}
+    </>
+  );
+}
+
+function RecurringRow({ charge }: { charge: RecurringCharge }) {
+  return (
+    <tr>
+      <td style={styles.td}>{charge.description}</td>
+      <td style={{ ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+        {YEN.format(negateExpense(charge.typicalYen))}
+      </td>
+      <td style={{ ...styles.td, fontSize: 13, opacity: 0.8 }}>
+        次回 {charge.nextDate}（{charge.monthCount}か月連続）
+      </td>
+    </tr>
   );
 }
 
