@@ -19,6 +19,7 @@ const BASE: StoredTransaction = {
   description: "店A",
   source: "card",
   category: "食費",
+  memo: "",
 };
 
 let sequence = 0;

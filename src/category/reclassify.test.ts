@@ -21,6 +21,7 @@ function tx(
     description,
     source: "card",
     category,
+    memo: "",
     ...extra,
   };
 }
@@ -223,6 +224,7 @@ describe("reclassifyTransactions", () => {
           date: "2026-02-29",
           amountYen: -12345,
           source: "card",
+          memo: "手で書いたメモ",
         }),
       ]);
 
@@ -235,6 +237,7 @@ describe("reclassifyTransactions", () => {
         description: "セブンイレブン渋谷店",
         source: "card",
         category: "食費",
+        memo: "手で書いたメモ",
       });
     });
 
@@ -349,6 +352,7 @@ describe("reclassifyTransactions", () => {
           date: "2026-02-29",
           amountYen: 250000,
           source: "bank",
+          memo: "7月分",
         }),
       ]);
 
@@ -361,6 +365,7 @@ describe("reclassifyTransactions", () => {
         description: "給与振込",
         source: "bank",
         category: INCOME,
+        memo: "7月分",
       });
     });
 

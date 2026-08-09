@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { buildBackup, parseBackup } from "../storage/backup.js";
 import {
+  getAllBudgets,
+  getAllCategories,
   getAllColumnMappings,
   getAllImports,
   getAllTransactions,
@@ -42,6 +44,8 @@ export function BackupPanel({
         imports: await getAllImports(db),
         columnMappings: await getAllColumnMappings(db),
         learnedCategories: await getLearnedCategories(db),
+        categories: await getAllCategories(db),
+        budgets: await getAllBudgets(db),
       },
       new Date().toISOString(),
     );

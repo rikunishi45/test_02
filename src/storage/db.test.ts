@@ -5,14 +5,16 @@ import {
   getAllTransactions,
   getAllImports,
   getAllColumnMappings,
+  getAllCategories,
+  getAllBudgets,
   saveImport,
   getLearnedCategories,
   setLearnedCategory,
   replaceAll,
   putTransactions,
 } from "./db.js";
-import type { StoredTransaction, ImportRecord, NamedColumnMapping } from "./schema.js";
-import type { BackupData } from "./backup.js";
+import { budgetId, type StoredTransaction, type ImportRecord, type NamedColumnMapping } from "./schema.js";
+import { BACKUP_FORMAT_VERSION, type BackupData } from "./backup.js";
 import {
   classifyDescription,
   UNCATEGORIZED,
@@ -20,6 +22,8 @@ import {
   type LearnedCategories,
 } from "../category/classify.js";
 import type { ColumnMapping } from "../csv/column-mapping.js";
+import { defaultCategories } from "../category/default-categories.js";
+import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 
 /**
  * テストごとに新しい IDBFactory を作る。fake-indexeddb のグローバル shim を使うと
@@ -36,6 +40,7 @@ const TRANSACTION: StoredTransaction = {
   description: "セブンイレブン渋谷店",
   source: "card",
   category: "食費",
+  memo: "",
 };
 
 function transactionOf(overrides: Partial<StoredTransaction> = {}): StoredTransaction {
@@ -72,12 +77,14 @@ function namedMappingOf(overrides: Partial<NamedColumnMapping> = {}): NamedColum
 
 function backupOf(overrides: Partial<BackupData> = {}): BackupData {
   return {
-    formatVersion: 1,
+    formatVersion: BACKUP_FORMAT_VERSION,
     exportedAt: "2026-02-01T00:00:00.000Z",
     transactions: [],
     imports: [],
     columnMappings: [],
     learnedCategories: {},
+    categories: [],
+    budgets: [],
     ...overrides,
   };
 }
@@ -141,15 +148,17 @@ async function seedAllStores(db: IDBDatabase): Promise<void> {
 }
 
 describe("openDatabase", () => {
-  it('データベース名は "kakeibo"、バージョンは 1', async () => {
+  it('データベース名は "kakeibo"、バージョンは 2', async () => {
     const db = await freshDatabase();
     expect(db.name).toBe("kakeibo");
-    expect(db.version).toBe(1);
+    expect(db.version).toBe(2);
   });
 
-  it("4つのオブジェクトストアを作る", async () => {
+  it("6つのオブジェクトストアを作る", async () => {
     const db = await freshDatabase();
     expect(storeNames(db)).toEqual([
+      "budgets",
+      "categories",
       "columnMappings",
       "imports",
       "learnedCategories",
@@ -160,13 +169,29 @@ describe("openDatabase", () => {
   it("各ストアの keyPath が仕様どおり", async () => {
     const db = await freshDatabase();
     const tx = db.transaction(
-      ["transactions", "imports", "columnMappings", "learnedCategories"],
+      [
+        "transactions",
+        "imports",
+        "columnMappings",
+        "learnedCategories",
+        "categories",
+        "budgets",
+      ],
       "readonly",
     );
     expect(tx.objectStore("transactions").keyPath).toBe("id");
     expect(tx.objectStore("imports").keyPath).toBe("id");
     expect(tx.objectStore("columnMappings").keyPath).toBe("name");
     expect(tx.objectStore("learnedCategories").keyPath).toBe("description");
+    expect(tx.objectStore("categories").keyPath).toBe("name");
+    expect(tx.objectStore("budgets").keyPath).toBe("id");
+  });
+
+  it('budgets には month フィールドに対する "month" 索引がある', async () => {
+    const db = await freshDatabase();
+    const store = db.transaction("budgets", "readonly").objectStore("budgets");
+    expect(store.indexNames.contains("month")).toBe(true);
+    expect(store.index("month").keyPath).toBe("month");
   });
 
   it('transactions には date フィールドに対する "date" 索引がある', async () => {
@@ -182,8 +207,10 @@ describe("openDatabase", () => {
     const second = await openDatabase(factory);
 
     expect(second.name).toBe("kakeibo");
-    expect(second.version).toBe(1);
+    expect(second.version).toBe(2);
     expect(storeNames(second)).toEqual([
+      "budgets",
+      "categories",
       "columnMappings",
       "imports",
       "learnedCategories",
@@ -198,6 +225,245 @@ describe("openDatabase", () => {
 
     const second = await openDatabase(factory);
     expect(await getAllTransactions(second)).toEqual([transactionOf()]);
+  });
+});
+
+/**
+ * v1 のデータベースを、v1 当時のスキーマそのままで作る。
+ *
+ * `openDatabase` を使わずに手で組むのが要。あちらは常に最新版を開くので、
+ * 「古い状態から上げる」経路をそもそも通らない。**移行が実データに対して
+ * 一度きりの不可逆な操作である以上、ここは古い形を再現して確かめる。**
+ *
+ * `memo` は付けない。v1 に無かったフィールドなので。
+ */
+interface V1Transaction {
+  id: string;
+  date: string;
+  amountYen: number;
+  description: string;
+  source: string;
+  category: string;
+}
+
+/** v1 のスキーマで開いた接続を返す。**閉じるのは呼び出し側の責任** */
+function openV1(factory: IDBFactory): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open("kakeibo", 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      db.createObjectStore("transactions", { keyPath: "id" }).createIndex("date", "date");
+      db.createObjectStore("imports", { keyPath: "id" });
+      db.createObjectStore("columnMappings", { keyPath: "name" });
+      db.createObjectStore("learnedCategories", { keyPath: "description" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function openVersion1(factory: IDBFactory, rows: readonly V1Transaction[]): Promise<void> {
+  const db = await openV1(factory);
+  const tx = db.transaction("transactions", "readwrite");
+  const store = tx.objectStore("transactions");
+  await new Promise<void>((resolve, reject) => {
+    for (const row of rows) {
+      store.put(row);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  // 開いたままだと versionchange が blocked になり、次の open が返らない。
+  db.close();
+}
+
+function v1Transaction(overrides: Partial<V1Transaction> = {}): V1Transaction {
+  return {
+    id: "v1-001",
+    date: "2026-01-15",
+    amountYen: -500,
+    description: "セブンイレブン渋谷店",
+    source: "card",
+    category: "食費",
+    ...overrides,
+  };
+}
+
+describe("v1 から v2 への移行", () => {
+  it("v1 のデータベースを開くと、増えた2つのストアができる", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, []);
+
+    const db = await openDatabase(factory);
+
+    expect(db.version).toBe(2);
+    expect(storeNames(db)).toEqual([
+      "budgets",
+      "categories",
+      "columnMappings",
+      "imports",
+      "learnedCategories",
+      "transactions",
+    ]);
+  });
+
+  it("v1 に入っていた取引が消えない", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, [
+      v1Transaction({ id: "a", description: "既存1" }),
+      v1Transaction({ id: "b", description: "既存2", amountYen: -1200 }),
+    ]);
+
+    const db = await openDatabase(factory);
+
+    expect(byId(await getAllTransactions(db))).toEqual(
+      byId([
+        { ...v1Transaction({ id: "a", description: "既存1" }), memo: "" },
+        { ...v1Transaction({ id: "b", description: "既存2", amountYen: -1200 }), memo: "" },
+      ]),
+    );
+  });
+
+  it("v1 の取引すべてに memo が空文字列で入る（undefined のまま残さない）", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, [
+      v1Transaction({ id: "a" }),
+      v1Transaction({ id: "b" }),
+      v1Transaction({ id: "c" }),
+    ]);
+
+    const db = await openDatabase(factory);
+    const rows = await getAllTransactions(db);
+
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.memo).toBe("");
+    }
+  });
+
+  /**
+   * 埋め戻しは「memo が文字列でないものだけ」を対象にする。全件を無条件に
+   * 上書きすると、既に入っている memo が消える。v1 の取引に memo は無い前提だが、
+   * ここを無条件にすると移行が**データを消す方向に**壊れるので、区別を固定する。
+   */
+  it("既に memo が入っている取引は、埋め戻しで上書きされない", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, [
+      { ...v1Transaction({ id: "has-memo" }), memo: "既にあるメモ" } as V1Transaction,
+      v1Transaction({ id: "no-memo" }),
+    ]);
+
+    const db = await openDatabase(factory);
+    const rows = await getAllTransactions(db);
+
+    expect(rows.find((row) => row.id === "has-memo")?.memo).toBe("既にあるメモ");
+    expect(rows.find((row) => row.id === "no-memo")?.memo).toBe("");
+  });
+
+  it("v1 に取引が1件も無くても移行できる", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, []);
+
+    const db = await openDatabase(factory);
+
+    expect(await getAllTransactions(db)).toEqual([]);
+  });
+
+  it("移行でカテゴリの初期値が入る", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, []);
+
+    const db = await openDatabase(factory);
+
+    expect(await getAllCategories(db)).toEqual(
+      expect.arrayContaining(defaultCategories(DEFAULT_CATEGORY_RULES)),
+    );
+  });
+
+  it("移行の直後、予算は1件も入っていない", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, []);
+
+    const db = await openDatabase(factory);
+
+    expect(await getAllBudgets(db)).toEqual([]);
+  });
+
+  it("移行した後にもう一度開いても、memo が上書きされない", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, [v1Transaction({ id: "a" })]);
+
+    const first = await openDatabase(factory);
+    await putTransactions(first, [
+      { ...v1Transaction({ id: "a" }), source: "card", memo: "書いたメモ" } as StoredTransaction,
+    ]);
+    first.close();
+
+    const second = await openDatabase(factory);
+
+    expect((await getAllTransactions(second))[0]?.memo).toBe("書いたメモ");
+  });
+
+  it("移行した後にもう一度開いても、消したカテゴリが復活しない", async () => {
+    const factory = new IDBFactory();
+    await openVersion1(factory, []);
+
+    const first = await openDatabase(factory);
+    const tx = first.transaction("categories", "readwrite");
+    tx.objectStore("categories").clear();
+    await new Promise((resolve) => {
+      tx.oncomplete = resolve;
+    });
+    first.close();
+
+    const second = await openDatabase(factory);
+
+    expect(await getAllCategories(second)).toEqual([]);
+  });
+});
+
+/**
+ * 別のタブが古いバージョンで開いたままだと versionchange が始められない。
+ * v1 しか無かった間は upgrade 自体が起きなかったので、この経路は表に出なかった。
+ */
+describe("他の接続に阻まれたとき", () => {
+  it("古いバージョンの接続が開いたままなら、待ち続けずに失敗する", async () => {
+    const factory = new IDBFactory();
+    const held = await openV1(factory);
+
+    await expect(openDatabase(factory)).rejects.toThrow(/他のタブ/u);
+
+    held.close();
+  });
+
+  it("阻んでいた接続を閉じれば、開けるようになる", async () => {
+    const factory = new IDBFactory();
+    const held = await openV1(factory);
+    await expect(openDatabase(factory)).rejects.toThrow();
+
+    held.close();
+    const db = await openDatabase(factory);
+
+    expect(db.version).toBe(2);
+    expect(storeNames(db)).toContain("categories");
+  });
+});
+
+describe("カテゴリの初期値", () => {
+  it("新規のデータベースにも初期値が入る", async () => {
+    const db = await freshDatabase();
+
+    expect(await getAllCategories(db)).toEqual(
+      expect.arrayContaining(defaultCategories(DEFAULT_CATEGORY_RULES)),
+    );
+  });
+
+  it("初期値の件数が defaultCategories と一致する", async () => {
+    const db = await freshDatabase();
+
+    expect(await getAllCategories(db)).toHaveLength(
+      defaultCategories(DEFAULT_CATEGORY_RULES).length,
+    );
   });
 });
 
@@ -1331,6 +1597,60 @@ describe("replaceAll", () => {
     const stored = await getAllTransactions(db);
     expect(stored).toHaveLength(2);
     expect(byId(stored)).toEqual(byId([restored, added]));
+  });
+
+  it("バックアップのカテゴリと予算が入る", async () => {
+    const db = await freshDatabase();
+    const categories = [
+      { name: "食費", color: "#2fbf6b", order: 0 },
+      { name: "住居費", color: "#ef6a6a", order: 1 },
+    ];
+    const budgets = [
+      { id: budgetId("2026-07", "食費"), month: "2026-07", category: "食費", amountYen: 60000 },
+    ];
+
+    await replaceAll(db, backupOf({ categories, budgets }));
+
+    expect(await getAllCategories(db)).toEqual(expect.arrayContaining(categories));
+    expect(await getAllCategories(db)).toHaveLength(2);
+    expect(await getAllBudgets(db)).toEqual(budgets);
+  });
+
+  /**
+   * 移行で入れた初期値が残ったまま復元すると、バックアップに無いカテゴリが
+   * 混ざる。全消ししてから書く対象に categories が入っているかを確かめる。
+   */
+  it("復元前から入っていたカテゴリは消える", async () => {
+    const db = await freshDatabase();
+    expect((await getAllCategories(db)).length).toBeGreaterThan(0);
+
+    const categories = [{ name: "食費", color: "#2fbf6b", order: 0 }];
+    await replaceAll(db, backupOf({ categories }));
+
+    expect(await getAllCategories(db)).toEqual(categories);
+  });
+
+  it("復元前から入っていた予算は消える", async () => {
+    const db = await freshDatabase();
+    const before = [
+      { id: budgetId("2026-06", "食費"), month: "2026-06", category: "食費", amountYen: 50000 },
+    ];
+    await replaceAll(db, backupOf({ budgets: before }));
+
+    await replaceAll(db, backupOf({ budgets: [] }));
+
+    expect(await getAllBudgets(db)).toEqual([]);
+  });
+});
+
+describe("budgetId", () => {
+  it("月とカテゴリをコロンでつなぐ", () => {
+    expect(budgetId("2026-07", "食費")).toBe("2026-07:食費");
+  });
+
+  it("月かカテゴリが違えば、別のキーになる", () => {
+    expect(budgetId("2026-07", "食費")).not.toBe(budgetId("2026-08", "食費"));
+    expect(budgetId("2026-07", "食費")).not.toBe(budgetId("2026-07", "住居費"));
   });
 });
 
