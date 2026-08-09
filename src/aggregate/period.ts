@@ -32,8 +32,9 @@ export function monthOf(date: string): string {
  * **日付に「1か月」を足す形では書けない。** 1月31日の翌月は2月31日で、
  * `Date` に足させると3月3日に繰り上がる。月キーだけを動かせばその問題が無い。
  *
- * 年は4桁にゼロ詰めする。`parseDate` は `\d{4}` を受理するので3桁以下の年が
- * 保存され得て、詰めないと日付順の比較（文字列の辞書順）が壊れる。
+ * 年は4桁にゼロ詰めする。境界（`parseDate`）が年を1900〜2100に絞るので取り込んだ
+ * データからは3桁以下の年は来ないが、詰めないと日付順の比較（文字列の辞書順）が
+ * 壊れる。ゼロ詰めの正しさを境界の受理域に依存させない。
  */
 export function shiftMonth(month: string, step: number): string {
   const year = Number(month.slice(0, 4));
