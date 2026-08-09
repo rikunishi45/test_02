@@ -5,6 +5,7 @@ import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { reclassifyTransactions } from "../category/reclassify.js";
 import type { StoredTransaction } from "../storage/schema.js";
 import { useDatabase } from "./useDatabase.js";
+import { usePersistence } from "./usePersistence.js";
 import { ImportScreen } from "./ImportScreen.js";
 import { CashEntryScreen } from "./CashEntryScreen.js";
 import { TransactionList } from "./TransactionList.js";
@@ -15,6 +16,7 @@ type Tab = "summary" | "list" | "import" | "cash";
 
 export function App() {
   const database = useDatabase();
+  const persistence = usePersistence();
   const [tab, setTab] = useState<Tab>("summary");
   const [transactions, setTransactions] = useState<StoredTransaction[]>([]);
   const [learned, setLearned] = useState<LearnedCategories>({});
@@ -121,7 +123,7 @@ export function App() {
         <CashEntryScreen db={database.db} learned={learned} onSaved={reload} />
       )}
 
-      <BackupPanel db={database.db} onRestored={reload} />
+      <BackupPanel db={database.db} persistence={persistence} onRestored={reload} />
     </main>
   );
 }
