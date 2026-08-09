@@ -23,7 +23,7 @@ import { SummaryScreen } from "./SummaryScreen.js";
 import { BackupPanel } from "./BackupPanel.js";
 
 /**
- * 画面。ホームとカレンダーはまだ無い（段階6・段階2で足す）。
+ * 画面。ホームはまだ無い（段階6で足す）。
  * 順番はサイドバーの並びと同じ。
  */
 type Tab = "report" | "list" | "cash" | "calendar" | "import" | "settings";
@@ -115,8 +115,11 @@ export function App() {
       {tab === "report" && <SummaryScreen transactions={transactions} />}
       {tab === "list" && (
         <TransactionList
+          db={database.db}
           transactions={transactions}
+          learned={learned}
           onCategoryChange={(description, category) => void changeCategory(description, category)}
+          onChanged={reload}
         />
       )}
       {tab === "cash" && (

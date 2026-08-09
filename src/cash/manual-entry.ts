@@ -1,6 +1,7 @@
 import { parseAmount } from "../csv/parse-amount.js";
 import { parseDate } from "../csv/parse-date.js";
 import type { Transaction, TransactionSource } from "../domain/transaction.js";
+import type { StoredTransaction } from "../storage/schema.js";
 
 export type ManualEntryField = "date" | "amount" | "description";
 
@@ -99,5 +100,37 @@ export function buildManualTransaction(input: ManualEntryInput): ManualEntryResu
     ok: true,
     transaction: { date: date!, amountYen: amountYen!, description, source: input.source },
     memo: input.memo.trim(),
+  };
+}
+
+/**
+ * 保存済みの取引を、入力欄に載せられる形に戻す。1件の編集用。
+ *
+ * **符号を分解する向きの変換をここに置く。** 元帳は符号付きで持ち
+ * （支出が負）、入力は大きさと種別に分かれている（`ManualEntryInput`）。
+ * この分解を画面に書くと、`buildManualTransaction` が組み立てる向きだけが
+ * 壁の中にあって、ほどく向きが外に出る。符号の扱いを層をまたいで2か所に
+ * 持つのは、このプロジェクトで4回誤りが出ている形そのもの
+ * （`.claude/rules/typescript.md`）。
+ *
+ * 金額は区切りを入れない数字の列で返す。テンキーの `pressKey` がそのまま
+ * 続きを打てる形（`"1,200"` を渡すと次の1打で壊れる）。
+ *
+ * **0円の取引は支出として返す。** 取り込んだ行には 0 があり得るが、
+ * `buildManualTransaction` は 0 を弾く。編集で開くと金額のエラーが出た状態に
+ * なり、直さないと保存できない——0 のまま素通しするより、直す機会として正しい。
+ */
+export function toManualEntryInput(transaction: StoredTransaction): ManualEntryInput {
+  return {
+    date: transaction.date,
+    // Math.abs は -0 を +0 にする。String(-0) が "0" になるのと合わせて、
+    // 入力欄に "-0" が出る経路が無い。
+    amount: String(Math.abs(transaction.amountYen)),
+    description: transaction.description,
+    // 判定を「正なら収入」の向きで書く。「負なら支出」だと 0 と -0 が収入側に
+    // 落ちる（`-0 < 0` は偽）。0 は壊れた支出の行として開きたい。
+    kind: transaction.amountYen > 0 ? "income" : "expense",
+    source: transaction.source,
+    memo: transaction.memo,
   };
 }
