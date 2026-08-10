@@ -1,23 +1,10 @@
-import { daysInMonth } from "../domain/date-parts.js";
+import { daysInMonth, MAX_YEAR, MIN_YEAR } from "../domain/date-parts.js";
 
 const PATTERNS = [
   /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/,
   /^(\d{4})-(\d{1,2})-(\d{1,2})$/,
   /^(\d{4})年(\d{1,2})月(\d{1,2})日$/,
 ];
-
-/**
- * 受理する年の範囲。家計簿の取引としてこの外側は、実在の記録ではなく列の
- * 取り違えや桁の打ち間違いと見る。
- *
- * **範囲を絞る理由は妥当性だけではない。** 境界の内側では `shiftMonth` や
- * `addDays` が年をまたいで動く。受理域が 0000 や 9999 に接していると、その
- * 繰り上がり・繰り下がりが4桁からあふれて `"YYYY-MM-DD"` の10文字契約が壊れ、
- * `monthOf` の `slice(0, 7)` が別の位置を切り出す。内側の関数それぞれに桁の
- * 防御を足すのではなく（AGENTS.md 3）、境界で余裕のある範囲に閉じ込める。
- */
-const MIN_YEAR = 1900;
-const MAX_YEAR = 2100;
 
 /**
  * 日付文字列を YYYY-MM-DD に正規化する。

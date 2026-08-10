@@ -6,6 +6,7 @@ import type {
   BudgetRecord,
 } from "./schema.js";
 import type { LearnedCategories } from "../category/classify.js";
+import { isIsoDate } from "../domain/date-parts.js";
 import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { defaultCategories } from "../category/default-categories.js";
 
@@ -67,6 +68,13 @@ function validateTransactions(items: unknown[]): void {
       if (typeof item[key] !== "string") {
         throw new Error(`parseBackup: transactions[${index}].${key} が文字列ではない`);
       }
+    }
+    // 形まで見る。集計も絞り込みもカレンダーも `"YYYY-MM-DD"` の10文字を
+    // 前提に slice で切り出すので、別の形の文字列は静かに変な期間として
+    // 画面に出る（例外にならない）。取り込み側は parseDate が同じ受理域で
+    // 弾いていて、抜けているのはこちらの境界だけだった。
+    if (!isIsoDate(item["date"] as string)) {
+      throw new Error(`parseBackup: transactions[${index}].date が日付ではない`);
     }
     if (typeof item["amountYen"] !== "number" || !Number.isInteger(item["amountYen"])) {
       throw new Error(`parseBackup: transactions[${index}].amountYen が整数ではない`);

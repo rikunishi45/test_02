@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { isLeapYear, daysInMonth, dayOfWeek, toIsoDate } from "./date-parts.js";
 import { addDays } from "./date-parts.js";
+import { isIsoDate, MIN_YEAR, MAX_YEAR } from "./date-parts.js";
 
 function at<T>(items: readonly T[], index: number): T {
   const item = items[index];
@@ -645,6 +646,272 @@ describe("addDays", () => {
       expect(new Set(dates).size).toBe(20);
       expect(dates).toEqual([...dates].sort());
       expect(dates).toContain("2024-02-29");
+    });
+  });
+});
+
+describe("isIsoDate", () => {
+  /** 2026年（平年）の各月の日数。daysInMonth に依存させず、期待値をここで固定する */
+  const LAST_DAY_2026 = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  describe("受理する形と値", () => {
+    it.each([
+      "2026-08-09",
+      "2026-01-01",
+      "2026-12-31",
+      "1999-06-15",
+      "2000-02-29",
+      "2050-10-20",
+      "1900-01-01",
+      "2100-12-31",
+    ])("%s は true", (value) => {
+      expect(isIsoDate(value)).toBe(true);
+    });
+
+    it("真偽値そのものを返す（真っぽい値ではない）", () => {
+      expect(isIsoDate("2026-08-09")).toBe(true);
+      expect(isIsoDate("2026-08-32")).toBe(false);
+    });
+  });
+
+  describe("年の受理域（MIN_YEAR〜MAX_YEAR）", () => {
+    it("受理域は 1900〜2100", () => {
+      expect([MIN_YEAR, MAX_YEAR]).toEqual([1900, 2100]);
+    });
+
+    it("下限ちょうどの 1900-01-01 は true、1つ手前の 1899-12-31 は false", () => {
+      expect(isIsoDate("1900-01-01")).toBe(true);
+      expect(isIsoDate("1899-12-31")).toBe(false);
+    });
+
+    it("上限ちょうどの 2100-12-31 は true、1つ先の 2101-01-01 は false", () => {
+      expect(isIsoDate("2100-12-31")).toBe(true);
+      expect(isIsoDate("2101-01-01")).toBe(false);
+    });
+
+    it("両端の年は年内のどの日でも true（両端を含む）", () => {
+      expect(
+        ["1900-01-01", "1900-06-15", "1900-12-31", "2100-01-01", "2100-12-31"].map(
+          (value) => isIsoDate(value),
+        ),
+      ).toEqual([true, true, true, true, true]);
+    });
+
+    it.each([
+      "1899-01-01",
+      "1899-06-15",
+      "1800-01-01",
+      "1000-06-15",
+      "0099-01-01",
+      "0001-01-01",
+      "0000-01-01",
+      "2101-12-31",
+      "2200-01-01",
+      "9999-12-31",
+    ])("受理域の外の %s は false", (value) => {
+      expect(isIsoDate(value)).toBe(false);
+    });
+
+    it("MIN_YEAR / MAX_YEAR の内外で分かれる（定数から組み立てた日付で確認する）", () => {
+      expect(
+        [
+          `${MIN_YEAR}-01-01`,
+          `${MAX_YEAR}-12-31`,
+          `${MIN_YEAR - 1}-12-31`,
+          `${MAX_YEAR + 1}-01-01`,
+        ].map((value) => isIsoDate(value)),
+      ).toEqual([true, true, false, false]);
+    });
+  });
+
+  describe("月の境界", () => {
+    it("01 は true、00 は false", () => {
+      expect(isIsoDate("2026-01-15")).toBe(true);
+      expect(isIsoDate("2026-00-15")).toBe(false);
+    });
+
+    it("12 は true、13 は false", () => {
+      expect(isIsoDate("2026-12-15")).toBe(true);
+      expect(isIsoDate("2026-13-15")).toBe(false);
+    });
+
+    it("1〜12 のすべての月が true", () => {
+      const dates = Array.from({ length: 12 }, (_, index) => `2026-${pad2(index + 1)}-01`);
+      expect(dates.map((value) => isIsoDate(value))).toEqual(
+        Array.from({ length: 12 }, () => true),
+      );
+    });
+
+    it.each(["2026-00-01", "2026-13-01", "2026-14-01", "2026-20-01", "2026-99-01"])(
+      "%s は false",
+      (value) => {
+        expect(isIsoDate(value)).toBe(false);
+      },
+    );
+  });
+
+  describe("日の境界", () => {
+    it("01 は true、00 は false", () => {
+      expect(isIsoDate("2026-08-01")).toBe(true);
+      expect(isIsoDate("2026-08-00")).toBe(false);
+    });
+
+    it("31日ある月の 31 は true、32 は false", () => {
+      expect(isIsoDate("2026-01-31")).toBe(true);
+      expect(isIsoDate("2026-01-32")).toBe(false);
+    });
+
+    it("30日しかない月の 30 は true、31 は false", () => {
+      expect(isIsoDate("2026-04-30")).toBe(true);
+      expect(isIsoDate("2026-04-31")).toBe(false);
+    });
+
+    it.each(["2026-01-31", "2026-03-31", "2026-05-31", "2026-07-31", "2026-08-31", "2026-10-31", "2026-12-31"])(
+      "31日ある月の %s は true",
+      (value) => {
+        expect(isIsoDate(value)).toBe(true);
+      },
+    );
+
+    it.each(["2026-04-31", "2026-06-31", "2026-09-31", "2026-11-31"])(
+      "30日しかない月の %s は false",
+      (value) => {
+        expect(isIsoDate(value)).toBe(false);
+      },
+    );
+
+    it("2026年の各月で、末日は true・末日の翌数字は false", () => {
+      const lastDays = LAST_DAY_2026.map((day, index) =>
+        isIsoDate(`2026-${pad2(index + 1)}-${pad2(day)}`),
+      );
+      const overflow = LAST_DAY_2026.map((day, index) =>
+        isIsoDate(`2026-${pad2(index + 1)}-${pad2(day + 1)}`),
+      );
+
+      expect(lastDays).toEqual(Array.from({ length: 12 }, () => true));
+      expect(overflow).toEqual(Array.from({ length: 12 }, () => false));
+    });
+
+    it.each(["2026-08-40", "2026-08-99", "2026-08-50"])("%s は false", (value) => {
+      expect(isIsoDate(value)).toBe(false);
+    });
+  });
+
+  describe("うるう年の2月29日", () => {
+    it.each(["2024-02-29", "2020-02-29", "2016-02-29", "2000-02-29"])("%s は true", (value) => {
+      expect(isIsoDate(value)).toBe(true);
+    });
+
+    it.each(["2026-02-29", "2023-02-29", "2025-02-29", "1900-02-29", "2100-02-29"])(
+      "%s は false",
+      (value) => {
+        expect(isIsoDate(value)).toBe(false);
+      },
+    );
+
+    it("2024-02-29 は true、2026-02-29 は false（同じ表記が年で分かれる）", () => {
+      expect(isIsoDate("2024-02-29")).toBe(true);
+      expect(isIsoDate("2026-02-29")).toBe(false);
+    });
+
+    it("2000-02-29 は true、1900-02-29 は false（400年周期の例外を正しく扱う）", () => {
+      expect(isIsoDate("2000-02-29")).toBe(true);
+      expect(isIsoDate("1900-02-29")).toBe(false);
+    });
+
+    it("2月28日は閏年でも平年でも true", () => {
+      expect(["2024-02-28", "2026-02-28", "1900-02-28", "2100-02-28"].map((value) =>
+        isIsoDate(value),
+      )).toEqual([true, true, true, true]);
+    });
+
+    it("2月30日は閏年でも false（29 の次で切れる）", () => {
+      expect(isIsoDate("2024-02-29")).toBe(true);
+      expect(isIsoDate("2024-02-30")).toBe(false);
+    });
+  });
+
+  describe("ゼロ埋めしていない形は false", () => {
+    it.each(["2026-2-1", "2026-2-01", "2026-02-1", "226-02-01", "26-02-01", "26-2-1"])(
+      "%s は false",
+      (value) => {
+        expect(isIsoDate(value)).toBe(false);
+      },
+    );
+
+    it("2026-02-01 は true、ゼロを外した 2026-2-1 は false（対）", () => {
+      expect(isIsoDate("2026-02-01")).toBe(true);
+      expect(isIsoDate("2026-2-1")).toBe(false);
+    });
+  });
+
+  describe("桁が多い形は false", () => {
+    it.each(["20260201", "2026-002-01", "2026-02-001", "02026-02-01", "2026-02-011"])(
+      "%s は false",
+      (value) => {
+        expect(isIsoDate(value)).toBe(false);
+      },
+    );
+  });
+
+  describe("区切りが違う形は false", () => {
+    it.each([
+      "2026/02/01",
+      "2026年2月1日",
+      "2026年02月01日",
+      "2026.02.01",
+      "2026 02 01",
+      "2026_02_01",
+      "2026:02:01",
+      "2026-02:01",
+    ])("%s は false", (value) => {
+      expect(isIsoDate(value)).toBe(false);
+    });
+  });
+
+  describe("前後に余分な文字が付くと false（トリムしない）", () => {
+    it.each([
+      " 2026-02-01",
+      "2026-02-01 ",
+      " 2026-02-01 ",
+      "\t2026-02-01",
+      "2026-02-01\n",
+      "\n2026-02-01",
+      "2026-02-01T00:00:00",
+      "2026-02-01T00:00:00.000Z",
+      "2026-02-01Z",
+      "x2026-02-01",
+      "2026-02-01x",
+      "2026-02-01-02",
+    ])("%s は false", (value) => {
+      expect(isIsoDate(value)).toBe(false);
+    });
+
+    it("2026-02-01 は true、前後に空白を足すと false（対）", () => {
+      expect(isIsoDate("2026-02-01")).toBe(true);
+      expect(isIsoDate(" 2026-02-01 ")).toBe(false);
+    });
+  });
+
+  describe("そもそも日付でない文字列は false", () => {
+    it("空文字列は false", () => {
+      expect(isIsoDate("")).toBe(false);
+    });
+
+    it.each([
+      " ",
+      "-",
+      "--",
+      "----------",
+      "20a6-02-01",
+      "2026-0a-01",
+      "2026-02-0a",
+      "abcd-ef-gh",
+      "２０２６-０２-０１",
+      "2026-02-０1",
+      "not a date",
+    ])("%s は false", (value) => {
+      expect(isIsoDate(value)).toBe(false);
     });
   });
 });
