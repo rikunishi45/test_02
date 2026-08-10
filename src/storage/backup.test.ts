@@ -540,7 +540,9 @@ describe("parseBackup", () => {
       });
     });
 
-    describe.each(["id", "date", "description", "category"])("%s は文字列", (field) => {
+    // date は「文字列でありさえすればよい」項目ではない（日付として妥当であることまで
+    // 要る）ので、この一括検査からは外して専用の describe で見る。
+    describe.each(["id", "description", "category"])("%s は文字列", (field) => {
       it("文字列なら受け入れる（対）", () => {
         const element = elementWith(VALID_TRANSACTION, field, "任意の文字列");
         expect(parseBackup(txJson(element)).transactions).toEqual([element]);
@@ -1815,5 +1817,166 @@ describe("v2 形式：主キーの重複", () => {
         }),
       ),
     ).toThrow(/categories\[0\]\.name/u);
+  });
+});
+
+/**
+ * 日付の妥当性の定義は isIsoDate と同じ（YYYY-MM-DD・実在する日・1900〜2100）。
+ * 文字列でありさえすればよい他の項目と違い、ここは値まで見る。
+ */
+describe("transactions[].date は日付として妥当", () => {
+  /** date だけを差し替えた取引1件の JSON。他のフィールドはすべて正しい */
+  function dateJson(date: unknown): string {
+    return v2Json({ transactions: [elementWith(VALID_TRANSACTION, "date", date)] });
+  }
+
+  describe("妥当な日付なら受け入れる（対）", () => {
+    it.each([
+      "2026-01-15",
+      "2026-12-31",
+      "1900-01-01",
+      "2100-12-31",
+      "2024-02-29",
+      "2000-02-29",
+    ])("%s なら例外にならず、その値のまま返る", (date) => {
+      expect(parseBackup(dateJson(date)).transactions.map((tx) => tx.date)).toEqual([date]);
+    });
+  });
+
+  describe("実在しない日なら例外", () => {
+    it.each([
+      "2026-02-30",
+      "2026-02-31",
+      "2026-04-31",
+      "2026-06-31",
+      "2026-02-29",
+      "2100-02-29",
+      "2026-13-01",
+      "2026-00-10",
+      "2026-01-00",
+      "2026-01-32",
+    ])("%s のとき例外を投げる", (date) => {
+      expect(() => parseBackup(dateJson(date))).toThrow();
+    });
+
+    it("2026-02-28 は通り 2026-02-30 は通らない（実在するかどうかで分かれる）", () => {
+      expect(() => parseBackup(dateJson("2026-02-28"))).not.toThrow();
+      expect(() => parseBackup(dateJson("2026-02-30"))).toThrow();
+    });
+
+    it("2024-02-29 は通り 2026-02-29 は通らない（うるう年を年で見分ける）", () => {
+      expect(() => parseBackup(dateJson("2024-02-29"))).not.toThrow();
+      expect(() => parseBackup(dateJson("2026-02-29"))).toThrow();
+    });
+  });
+
+  describe("形が違えば例外", () => {
+    it.each([
+      "2026/08/01",
+      "2026-8-1",
+      "2026-08-1",
+      "20260801",
+      "2026年8月1日",
+      " 2026-08-01",
+      "2026-08-01 ",
+      "2026-08-01T00:00:00.000Z",
+      "2026-08-01\n",
+      "20a6-08-01",
+      "",
+    ])("%s のとき例外を投げる", (date) => {
+      expect(() => parseBackup(dateJson(date))).toThrow();
+    });
+
+    it("2026-08-01 は通り 2026/08/01 は通らない（区切りで分かれる）", () => {
+      expect(() => parseBackup(dateJson("2026-08-01"))).not.toThrow();
+      expect(() => parseBackup(dateJson("2026/08/01"))).toThrow();
+    });
+
+    it("空文字列は通らない（他の文字列項目と違い、空を許さない）", () => {
+      expect(() => parseBackup(dateJson(""))).toThrow();
+    });
+  });
+
+  describe("受理域の外の年なら例外", () => {
+    it.each(["2101-01-01", "2101-12-31", "1899-12-31", "1800-01-01", "0099-01-01"])(
+      "%s のとき例外を投げる",
+      (date) => {
+        expect(() => parseBackup(dateJson(date))).toThrow();
+      },
+    );
+
+    it("1900-01-01 は通り 1899-12-31 は通らない（下限の内と外）", () => {
+      expect(() => parseBackup(dateJson("1900-01-01"))).not.toThrow();
+      expect(() => parseBackup(dateJson("1899-12-31"))).toThrow();
+    });
+
+    it("2100-12-31 は通り 2101-01-01 は通らない（上限の内と外）", () => {
+      expect(() => parseBackup(dateJson("2100-12-31"))).not.toThrow();
+      expect(() => parseBackup(dateJson("2101-01-01"))).toThrow();
+    });
+  });
+
+  describe("文字列でなければ例外", () => {
+    it.each(NON_STRINGS)("%s のとき例外を投げる", (_label, value) => {
+      expect(() => parseBackup(dateJson(value))).toThrow();
+    });
+  });
+
+  describe("どの要素が原因かがエラーに出る", () => {
+    it.each<[string, string]>([
+      ["実在しない日", "2026-02-30"],
+      ["形が違う", "2026/08/01"],
+      ["受理域の外の年", "2101-01-01"],
+    ])("%s のとき transactions[0].date を示す", (_label, date) => {
+      expect(() => parseBackup(dateJson(date))).toThrow(/transactions\[0\]\.date/u);
+    });
+
+    it("1件目が正しく2件目が壊れているとき、位置に 1 が出る", () => {
+      const elements = [
+        elementWith(VALID_TRANSACTION, "id", "t1"),
+        elementWith(elementWith(VALID_TRANSACTION, "id", "t2"), "date", "2026-02-30"),
+      ];
+      expect(() => parseBackup(v2Json({ transactions: elements }))).toThrow(
+        /transactions\[1\]\.date/u,
+      );
+    });
+
+    it("3件中2件目だけが壊れていても、位置に 1 が出る", () => {
+      const elements = [
+        elementWith(VALID_TRANSACTION, "id", "t1"),
+        elementWith(elementWith(VALID_TRANSACTION, "id", "t2"), "date", "2026/08/01"),
+        elementWith(VALID_TRANSACTION, "id", "t3"),
+      ];
+      expect(() => parseBackup(v2Json({ transactions: elements }))).toThrow(
+        /transactions\[1\]\.date/u,
+      );
+    });
+
+    it("3件すべて妥当なら受け入れる（対）", () => {
+      const elements = [
+        elementWith(elementWith(VALID_TRANSACTION, "id", "t1"), "date", "1900-01-01"),
+        elementWith(elementWith(VALID_TRANSACTION, "id", "t2"), "date", "2024-02-29"),
+        elementWith(elementWith(VALID_TRANSACTION, "id", "t3"), "date", "2100-12-31"),
+      ];
+      expect(
+        parseBackup(v2Json({ transactions: elements })).transactions.map((tx) => tx.date),
+      ).toEqual(["1900-01-01", "2024-02-29", "2100-12-31"]);
+    });
+  });
+
+  describe("v1 のバックアップでも同じ検証をする", () => {
+    it("実在しない日なら例外", () => {
+      expect(() =>
+        parseBackup(v1Json({ transactions: [elementWith(V1_TRANSACTION, "date", "2026-02-30")] })),
+      ).toThrow(/transactions\[0\]\.date/u);
+    });
+
+    it("妥当な日付なら受け入れる（対）", () => {
+      expect(
+        parseBackup(
+          v1Json({ transactions: [elementWith(V1_TRANSACTION, "date", "2024-02-29")] }),
+        ).transactions.map((tx) => tx.date),
+      ).toEqual(["2024-02-29"]);
+    });
   });
 });

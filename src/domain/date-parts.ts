@@ -1,5 +1,48 @@
 const MONTHS_WITH_30_DAYS = [4, 6, 9, 11];
 
+/**
+ * 受理する年の範囲。家計簿の取引としてこの外側は、実在の記録ではなく列の
+ * 取り違えや桁の打ち間違いと見る。
+ *
+ * **範囲を絞る理由は妥当性だけではない。** 境界の内側では `shiftMonth` や
+ * `addDays` が年をまたいで動く。受理域が 0000 や 9999 に接していると、その
+ * 繰り上がり・繰り下がりが4桁からあふれて `"YYYY-MM-DD"` の10文字契約が壊れ、
+ * `monthOf` の `slice(0, 7)` が別の位置を切り出す。内側の関数それぞれに桁の
+ * 防御を足すのではなく（AGENTS.md 3）、境界で余裕のある範囲に閉じ込める。
+ *
+ * **境界は2つある**（CSVの取り込みとバックアップの復元）。同じ受理域を
+ * 別々に持つと、片方だけ広げたときに内側の10文字契約が静かに破れる。
+ */
+export const MIN_YEAR = 1900;
+export const MAX_YEAR = 2100;
+
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/u;
+
+/**
+ * アプリが保持する日付の形かどうか。`"YYYY-MM-DD"` の**ゼロ埋め10文字**で、
+ * 実在する日で、年が受理域に収まること。
+ *
+ * `parseDate` と違って正規化しない。**受け入れるか弾くかだけを決める**もので、
+ * 既に正規化済みのはずの値（ストアやバックアップの中身）を検査するために使う。
+ */
+export function isIsoDate(value: string): boolean {
+  const match = ISO_DATE.exec(value);
+  if (match === null) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (year < MIN_YEAR || year > MAX_YEAR) {
+    return false;
+  }
+  if (month < 1 || month > 12) {
+    return false;
+  }
+  return day >= 1 && day <= daysInMonth(year, month);
+}
+
 export function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }
