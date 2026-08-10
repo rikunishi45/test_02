@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { negateExpense, sumAll, sumByMonth } from "../aggregate/period.js";
 import { isCategorizable, UNCATEGORIZED, type LearnedCategories } from "../category/classify.js";
-import { CATEGORIES } from "../category/default-rules.js";
+import { expenseCategories } from "../category/manage.js";
 import type { TransactionSource } from "../domain/transaction.js";
 import {
   NO_QUERY,
@@ -231,8 +231,11 @@ export function TransactionList({
                         t.category === UNCATEGORIZED ? styles.selectUncategorized : styles.select
                       }
                     >
-                      <option value={UNCATEGORIZED}>{UNCATEGORIZED}</option>
-                      {CATEGORIES.map((c) => (
+                      {/*
+                        選択肢はマスタから作る。ルールの定数（CATEGORIES）から
+                        作ると、名前を変えたあとに存在しないカテゴリを選べる。
+                      */}
+                      {expenseCategories(categories).map((c) => (
                         <option key={c} value={c}>
                           {c}
                         </option>

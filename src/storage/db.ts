@@ -1,6 +1,7 @@
 import { UNCATEGORIZED, type LearnedCategories } from "../category/classify.js";
 import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { defaultCategories } from "../category/default-categories.js";
+import type { CategoryChange } from "../category/manage.js";
 import type { BackupData } from "./backup.js";
 import {
   DB_NAME,
@@ -196,6 +197,43 @@ export async function deleteTransaction(db: IDBDatabase, id: string): Promise<vo
   const store = tx.objectStore(STORE_TRANSACTIONS);
   await writeAll(tx, () => {
     store.delete(id);
+  });
+}
+
+/**
+ * カテゴリの付け替えをまとめて書く。マスタ・取引・学習を**1つのトランザクション**で。
+ *
+ * 分けて書くと、途中で失敗したときに「一覧では外食だが、次の再読み込みで
+ * 食費に戻る」状態が残る。どのストアの書き込みが落ちたのかは画面から読めない。
+ *
+ * マスタは全消しして入れ直す。名前が主キーなので、名前を変えると古いキーの
+ * レコードが残る——差分を追って消すより、渡された集合をそのまま正とする方が
+ * ずれる余地が無い（`replaceAll` と同じ形）。
+ */
+export async function saveCategoryChange(db: IDBDatabase, change: CategoryChange): Promise<void> {
+  const tx = db.transaction(
+    [STORE_CATEGORIES, STORE_TRANSACTIONS, STORE_LEARNED_CATEGORIES],
+    "readwrite",
+  );
+  await writeAll(tx, () => {
+    const categories = tx.objectStore(STORE_CATEGORIES);
+    categories.clear();
+    for (const record of change.categories) {
+      categories.put(record);
+    }
+
+    const transactions = tx.objectStore(STORE_TRANSACTIONS);
+    for (const transaction of change.transactions) {
+      transactions.put(transaction);
+    }
+
+    const learned = tx.objectStore(STORE_LEARNED_CATEGORIES);
+    for (const entry of change.learned) {
+      learned.put(entry);
+    }
+    for (const description of change.forget) {
+      learned.delete(description);
+    }
   });
 }
 
