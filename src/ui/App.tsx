@@ -10,7 +10,7 @@ import type { LearnedCategories } from "../category/classify.js";
 import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { categoryNames } from "../category/default-categories.js";
 import { reclassifyTransactions } from "../category/reclassify.js";
-import type { StoredTransaction } from "../storage/schema.js";
+import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
 import { useDatabase } from "./useDatabase.js";
 import { usePersistence } from "./usePersistence.js";
 import { AppShell, type NavItem } from "./AppShell.js";
@@ -21,6 +21,7 @@ import { CalendarScreen } from "./CalendarScreen.js";
 import { TransactionList } from "./TransactionList.js";
 import { SummaryScreen } from "./SummaryScreen.js";
 import { BackupPanel } from "./BackupPanel.js";
+import { CategoryPanel } from "./CategoryPanel.js";
 
 /**
  * 画面。ホームはまだ無い（段階6で足す）。
@@ -43,7 +44,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>("report");
   const [transactions, setTransactions] = useState<StoredTransaction[]>([]);
   const [learned, setLearned] = useState<LearnedCategories>({});
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<CategoryRecord[]>([]);
 
   const db = database.status === "ready" ? database.db : null;
 
@@ -60,9 +61,12 @@ export function App() {
       getAllCategories(db),
     ]);
     setLearned(learnedNow);
-    setCategories(categoryNames(categoryRecords));
+    setCategories(categoryRecords);
 
-    const changed = reclassifyTransactions(rows, DEFAULT_CATEGORY_RULES, learnedNow);
+    // マスタに無いカテゴリは未分類に落とす。名前を変えてもルールは旧名を
+    // 返し続けるので、渡さないと選択欄に現れないカテゴリの行が一覧に出る。
+    const known = new Set(categoryRecords.map((record) => record.name));
+    const changed = reclassifyTransactions(rows, DEFAULT_CATEGORY_RULES, learnedNow, known);
     if (changed.length === 0) {
       setTransactions(rows);
       return;
@@ -95,6 +99,8 @@ export function App() {
     return <p style={styles.plain}>データベースを開けませんでした: {database.message}</p>;
   }
 
+  const categoryOptions = categoryNames(categories);
+
   const items: NavItem[] = [
     { id: "report", label: "レポート" },
     { id: "list", label: "取引一覧", count: transactions.length },
@@ -117,17 +123,22 @@ export function App() {
         <TransactionList
           db={database.db}
           transactions={transactions}
-          categories={categories}
+          categories={categoryOptions}
           learned={learned}
           onCategoryChange={(description, category) => void changeCategory(description, category)}
           onChanged={reload}
         />
       )}
       {tab === "cash" && (
-        <EntryScreen db={database.db} learned={learned} onSaved={reload} />
+        <EntryScreen
+          db={database.db}
+          categories={categoryOptions}
+          learned={learned}
+          onSaved={reload}
+        />
       )}
       {tab === "calendar" && (
-        <CalendarScreen transactions={transactions} categories={categories} />
+        <CalendarScreen transactions={transactions} categories={categoryOptions} />
       )}
       {tab === "import" && (
         <ImportScreen
@@ -137,7 +148,18 @@ export function App() {
           onImported={reload}
         />
       )}
-      {tab === "settings" && <BackupPanel db={database.db} onRestored={reload} />}
+      {tab === "settings" && (
+        <>
+          <CategoryPanel
+            db={database.db}
+            categories={categories}
+            transactions={transactions}
+            learned={learned}
+            onChanged={reload}
+          />
+          <BackupPanel db={database.db} onRestored={reload} />
+        </>
+      )}
     </AppShell>
   );
 }

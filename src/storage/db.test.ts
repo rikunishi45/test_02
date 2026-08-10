@@ -13,8 +13,10 @@ import {
   replaceAll,
   putTransactions,
   deleteTransaction,
+  saveCategoryChange,
 } from "./db.js";
-import { budgetId, type StoredTransaction, type ImportRecord, type NamedColumnMapping } from "./schema.js";
+import { budgetId, type CategoryRecord, type StoredTransaction, type ImportRecord, type NamedColumnMapping } from "./schema.js";
+import type { CategoryChange } from "../category/manage.js";
 import { BACKUP_FORMAT_VERSION, type BackupData } from "./backup.js";
 import {
   classifyDescription,
@@ -2357,3 +2359,181 @@ describe("deleteTransaction", () => {
     });
   });
 });
+
+describe("saveCategoryChange", () => {
+  const CATEGORIES: CategoryRecord[] = [
+    { name: "外食", color: "#111111", order: 0 },
+    { name: "交通費", color: "#222222", order: 1 },
+  ];
+
+  function changeOf(overrides: Partial<CategoryChange> = {}): CategoryChange {
+    return { categories: CATEGORIES, transactions: [], learned: [], forget: [], ...overrides };
+  }
+
+  describe("マスタ", () => {
+    it("渡した集合がそのままマスタになる", async () => {
+      const db = await freshDatabase();
+
+      await saveCategoryChange(db, changeOf());
+
+      expect(byName2(await getAllCategories(db))).toEqual(byName2(CATEGORIES));
+    });
+
+    // 名前が主キーなので、名前を変えると古いキーのレコードが残る。
+    it("初期値にあって渡さなかったカテゴリは消える", async () => {
+      const db = await freshDatabase();
+      const before = await getAllCategories(db);
+      expect(before.length).toBeGreaterThan(CATEGORIES.length);
+
+      await saveCategoryChange(db, changeOf());
+
+      expect((await getAllCategories(db)).length).toBe(CATEGORIES.length);
+    });
+
+    it("色と並び順もそのまま入る", async () => {
+      const db = await freshDatabase();
+
+      await saveCategoryChange(db, changeOf());
+
+      const saved = (await getAllCategories(db)).find((c) => c.name === "外食");
+      expect(saved).toEqual({ name: "外食", color: "#111111", order: 0 });
+    });
+  });
+
+  describe("取引", () => {
+    it("渡した取引だけが上書きされる", async () => {
+      const db = await freshDatabase();
+      await seed(db, {
+        transactions: [
+          transactionOf({ id: "a", category: "食費" }),
+          transactionOf({ id: "b", category: "交通費" }),
+        ],
+      });
+
+      await saveCategoryChange(db, changeOf({ transactions: [transactionOf({ id: "a", category: "外食" })] }));
+
+      const saved = byId(await getAllTransactions(db));
+      expect(saved.map((t) => [t.id, t.category])).toEqual([
+        ["a", "外食"],
+        ["b", "交通費"],
+      ]);
+    });
+
+    it("取引が空でもマスタは書ける", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a", category: "食費" })] });
+
+      await saveCategoryChange(db, changeOf());
+
+      expect((await getAllTransactions(db)).map((t) => t.category)).toEqual(["食費"]);
+    });
+
+    it("id が同じなら件数が増えない（上書きであって追加ではない）", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a", category: "食費" })] });
+
+      await saveCategoryChange(db, changeOf({ transactions: [transactionOf({ id: "a", category: "外食" })] }));
+
+      expect(await getAllTransactions(db)).toHaveLength(1);
+    });
+  });
+
+  describe("学習", () => {
+    it("付け替えた学習が入る", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, learnedOf([["セブン", "食費"]]));
+
+      await saveCategoryChange(db, changeOf({ learned: [{ description: "セブン", category: "外食" }] }));
+
+      expect(await getLearnedCategories(db)).toEqual(learnedOf([["セブン", "外食"]]));
+    });
+
+    it("forget に入れた摘要は学習から消える", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, learnedOf([["セブン", "食費"], ["タクシー", "交通費"]]));
+
+      await saveCategoryChange(db, changeOf({ forget: ["セブン"] }));
+
+      expect(await getLearnedCategories(db)).toEqual(learnedOf([["タクシー", "交通費"]]));
+    });
+
+    it("存在しない摘要を forget しても失敗しない", async () => {
+      const db = await freshDatabase();
+
+      await expect(saveCategoryChange(db, changeOf({ forget: ["無い"] }))).resolves.toBeUndefined();
+    });
+
+    it("触れていない学習は残る", async () => {
+      const db = await freshDatabase();
+      await seedLearned(db, learnedOf([["タクシー", "交通費"]]));
+
+      await saveCategoryChange(db, changeOf({ learned: [{ description: "セブン", category: "外食" }] }));
+
+      expect(await getLearnedCategories(db)).toEqual(
+        learnedOf([["タクシー", "交通費"], ["セブン", "外食"]]),
+      );
+    });
+  });
+
+  describe("3つのストアが1つのトランザクションで書かれる", () => {
+    it("マスタ・取引・学習が同時に反映される", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a", category: "食費" })] });
+      await seedLearned(db, learnedOf([["セブン", "食費"]]));
+
+      await saveCategoryChange(db, {
+        categories: CATEGORIES,
+        transactions: [transactionOf({ id: "a", category: "外食" })],
+        learned: [{ description: "セブン", category: "外食" }],
+        forget: [],
+      });
+
+      expect((await getAllTransactions(db))[0]?.category).toBe("外食");
+      expect(await getLearnedCategories(db)).toEqual(learnedOf([["セブン", "外食"]]));
+      expect(byName2(await getAllCategories(db))).toEqual(byName2(CATEGORIES));
+    });
+
+    // 同期的に投げる put（keyPath が欠けた値）はトランザクションを中断させる。
+    // 中断されなければ、既に積んだ clear() だけがコミットされてマスタが消える。
+    it("途中で失敗したらマスタが消えたままにならない", async () => {
+      const db = await freshDatabase();
+      const before = await getAllCategories(db);
+
+      const broken = { categories: CATEGORIES, transactions: [{} as StoredTransaction], learned: [], forget: [] };
+      await expect(saveCategoryChange(db, broken)).rejects.toBeTruthy();
+
+      expect(byName2(await getAllCategories(db))).toEqual(byName2(before));
+    });
+
+    it("失敗したとき取引も書き換わらない", async () => {
+      const db = await freshDatabase();
+      await seed(db, { transactions: [transactionOf({ id: "a", category: "食費" })] });
+
+      const broken = {
+        categories: CATEGORIES,
+        transactions: [transactionOf({ id: "a", category: "外食" }), {} as StoredTransaction],
+        learned: [],
+        forget: [],
+      };
+      await expect(saveCategoryChange(db, broken)).rejects.toBeTruthy();
+
+      expect((await getAllTransactions(db))[0]?.category).toBe("食費");
+    });
+  });
+
+  it("他のストア（取り込み履歴・列マッピング）には触らない", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: [transactionOf({ id: "a" })] });
+    const importsBefore = await getAllImports(db);
+    const mappingsBefore = await getAllColumnMappings(db);
+
+    await saveCategoryChange(db, changeOf());
+
+    expect(await getAllImports(db)).toEqual(importsBefore);
+    expect(await getAllColumnMappings(db)).toEqual(mappingsBefore);
+  });
+});
+
+function byName2(rows: readonly CategoryRecord[]): CategoryRecord[] {
+  return [...rows].sort((a, b) => a.name.localeCompare(b.name));
+}

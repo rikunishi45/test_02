@@ -681,3 +681,79 @@ describe("reclassifyTransactions", () => {
     });
   });
 });
+
+describe("known — マスタに無いカテゴリを未分類に落とす", () => {
+  const rules: CategoryRule[] = [{ pattern: "セブン", category: "食費" }];
+
+  it("マスタにあるカテゴリはそのまま", () => {
+    const transactions = [tx("a", "セブン", UNCATEGORIZED)];
+    const known = new Set(["食費", UNCATEGORIZED]);
+
+    expect(reclassifyTransactions(transactions, rules, {}, known)[0]?.category).toBe("食費");
+  });
+
+  // カテゴリの名前を変えてもルールは旧名を返し続ける。落とさないと、選択欄に
+  // 現れないカテゴリの行が一覧に出る。
+  it("マスタに無いカテゴリは未分類になる", () => {
+    const transactions = [tx("a", "セブン", UNCATEGORIZED)];
+    const known = new Set(["外食", UNCATEGORIZED]);
+
+    expect(reclassifyTransactions(transactions, rules, {}, known)).toEqual([]);
+  });
+
+  it("既にそのカテゴリだった取引も未分類に戻る", () => {
+    const transactions = [tx("a", "セブン", "食費")];
+    const known = new Set(["外食", UNCATEGORIZED]);
+
+    expect(reclassifyTransactions(transactions, rules, {}, known)[0]?.category).toBe(UNCATEGORIZED);
+  });
+
+  it("学習が指す名前もマスタに無ければ未分類になる", () => {
+    const transactions = [tx("a", "タクシー", "交通費")];
+    const known = new Set(["食費", UNCATEGORIZED]);
+
+    expect(
+      reclassifyTransactions(transactions, rules, { タクシー: "交通費" }, known)[0]?.category,
+    ).toBe(UNCATEGORIZED);
+  });
+
+  it("収入がマスタに無ければ未分類になる", () => {
+    const transactions = [tx("a", "給与", INCOME, { amountYen: 250000 })];
+    const known = new Set([UNCATEGORIZED]);
+
+    expect(reclassifyTransactions(transactions, rules, {}, known)[0]?.category).toBe(UNCATEGORIZED);
+  });
+
+  it("収入がマスタにあればそのまま", () => {
+    const transactions = [tx("a", "給与", INCOME, { amountYen: 250000 })];
+    const known = new Set([INCOME, UNCATEGORIZED]);
+
+    expect(reclassifyTransactions(transactions, rules, {}, known)).toEqual([]);
+  });
+
+  it("省略すると落とさない（今までどおり）", () => {
+    const transactions = [tx("a", "セブン", UNCATEGORIZED)];
+
+    expect(reclassifyTransactions(transactions, rules, {})[0]?.category).toBe("食費");
+  });
+
+  it("空の known ではすべて未分類になる", () => {
+    const transactions = [
+      tx("a", "セブン", "食費"),
+      tx("b", "給与", INCOME, { amountYen: 250000 }),
+    ];
+
+    expect(
+      reclassifyTransactions(transactions, rules, {}, new Set()).map((t) => t.category),
+    ).toEqual([UNCATEGORIZED, UNCATEGORIZED]);
+  });
+
+  it("落としても他の項目は変わらない", () => {
+    const original = tx("a", "セブン", "食費", { memo: "昼" });
+
+    expect(reclassifyTransactions([original], rules, {}, new Set([UNCATEGORIZED]))[0]).toEqual({
+      ...original,
+      category: UNCATEGORIZED,
+    });
+  });
+});

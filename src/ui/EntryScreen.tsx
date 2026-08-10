@@ -7,7 +7,8 @@ import {
 } from "../cash/manual-entry.js";
 import { pressKey, type KeypadKey } from "../cash/keypad.js";
 import { categoryFor, type LearnedCategories } from "../category/classify.js";
-import { CATEGORIES, DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
+import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
+import { selectableCategories } from "../category/manage.js";
 import { toIsoDate } from "../domain/date-parts.js";
 import type { TransactionSource } from "../domain/transaction.js";
 import { putTransactions, setLearnedCategory } from "../storage/db.js";
@@ -53,11 +54,13 @@ const GROUPED = new Intl.NumberFormat("ja-JP");
 
 interface Props {
   db: IDBDatabase;
+  /** カテゴリ欄の選択肢。マスタの並び順 */
+  categories: readonly string[];
   learned: LearnedCategories;
   onSaved: () => void;
 }
 
-export function EntryScreen({ db, learned, onSaved }: Props) {
+export function EntryScreen({ db, categories, learned, onSaved }: Props) {
   const [kind, setKind] = useState<ManualEntryKind>("expense");
   const [date, setDate] = useState(() => toIsoDate(new Date()));
   const [amount, setAmount] = useState("");
@@ -235,7 +238,7 @@ export function EntryScreen({ db, learned, onSaved }: Props) {
             */}
             <select value={category} onChange={(e) => setCategory(e.target.value)}>
               <option value={AUTO}>自動（摘要から判定）</option>
-              {CATEGORIES.map((c) => (
+              {selectableCategories(categories).map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
