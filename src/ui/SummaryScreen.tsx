@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  inCategory,
   inMonth,
   inRange,
   monthOf,
@@ -11,10 +10,15 @@ import {
   sumByCategory,
   sumByMonth,
   sumByYear,
-  valuesFor,
   yearOf,
   type PeriodTotal,
 } from "../aggregate/period.js";
+import {
+  buildSeries,
+  categorySeries,
+  EXPENSE_SERIES,
+  INCOME_SERIES,
+} from "../aggregate/series.js";
 import { compareByCategory, type CategoryComparison } from "../aggregate/compare.js";
 import { colorOf } from "../category/color.js";
 import { categoryNames } from "../category/default-categories.js";
@@ -51,22 +55,6 @@ const MODES: readonly (readonly [Mode, string])[] = [
   ["range", "期間"],
 ];
 
-/**
- * グラフに出す系列を選択欄の値で表す。
- *
- * カテゴリには**印を付ける。** 付けないと、`収入` という名前のカテゴリを
- * 作ったときに合計の収入と区別できない。
- */
-const EXPENSE_SERIES = "expense";
-const INCOME_SERIES = "income";
-const CATEGORY_SERIES_PREFIX = "category:";
-
-/** 選択欄の値から、絞り込むカテゴリ名を取り出す。合計（支出・収入）なら null */
-function categoryOfSeries(value: string): string | null {
-  return value.startsWith(CATEGORY_SERIES_PREFIX)
-    ? value.slice(CATEGORY_SERIES_PREFIX.length)
-    : null;
-}
 
 export function SummaryScreen({
   transactions,
@@ -114,23 +102,9 @@ export function SummaryScreen({
         ? transactions.filter((t) => yearOf(t.date) === shiftYear(period, -1))
         : null;
 
-  // グラフの系列。軸（期間の並び）は系列によらず全期間から作る——絞り込んだ
-  // 集計をそのまま並べると、取引の無い期間が詰められて棒とラベルがずれる
-  // （`valuesFor`）。
-  const seriesCategory = categoryOfSeries(series);
-  const isIncomeSeries = series === INCOME_SERIES;
-  const seriesTotals =
-    seriesCategory === null
-      ? periods
-      : mode === "year"
-        ? sumByYear(inCategory(transactions, seriesCategory))
-        : sumByMonth(inCategory(transactions, seriesCategory));
-  const seriesValues = valuesFor(
-    periods.map((p) => p.period),
-    seriesTotals,
-    isIncomeSeries ? "incomeYen" : "expenseYen",
-  );
-  const seriesLabel = seriesCategory ?? (isIncomeSeries ? "収入" : "支出");
+  // グラフの系列は壁の中で組む。どのカテゴリを・支出と収入のどちらを見るかは、
+  // 取り違えても金額として自然に見えてしまう（`series.ts`）。
+  const chart = buildSeries(transactions, periods, series, mode === "year" ? "year" : "month");
 
   const categories = sumByCategory(current);
   const comparison = previous === null ? null : compareByCategory(current, previous);
@@ -178,7 +152,7 @@ export function SummaryScreen({
         <>
           <h2 style={styles.h2}>
             {mode === "year" ? "年ごとの" : "月ごとの"}
-            {seriesLabel}
+            {chart.label}
             <select
               aria-label="グラフに出す内容"
               style={styles.seriesPicker}
@@ -189,7 +163,7 @@ export function SummaryScreen({
               <option value={INCOME_SERIES}>収入</option>
               <optgroup label="カテゴリ">
                 {expenseCategories(categoryNames(master)).map((name) => (
-                  <option key={name} value={`${CATEGORY_SERIES_PREFIX}${name}`}>
+                  <option key={name} value={categorySeries(name)}>
                     {name}
                   </option>
                 ))}
@@ -198,9 +172,9 @@ export function SummaryScreen({
           </h2>
           <MonthlyBars
             totals={periods}
-            values={seriesValues}
-            income={isIncomeSeries}
-            label={seriesLabel}
+            values={chart.values}
+            income={chart.income}
+            label={chart.label}
             selected={period}
             onSelect={setSelected}
             mode={mode}

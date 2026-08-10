@@ -651,6 +651,93 @@ describe("withAddedCategories", () => {
     });
   });
 
+  /**
+   * `moveCategory` は収入・未分類の移動を禁じていない。**並べ直す実装だと、
+   * 収入を上へ動かしていた人の設定を移行が黙って戻す。**
+   */
+  describe("既存の並びを変えない", () => {
+    it("収入が先頭にあっても、その位置のまま", () => {
+      const existing: CategoryRecord[] = [
+        { name: INCOME, color: INCOME_COLOR, order: 0 },
+        { name: "食費", color: CATEGORY_PALETTE[0]!, order: 1 },
+        { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 2 },
+      ];
+
+      expect(namesOf(withAddedCategories(existing, ["住居"]))).toEqual([
+        INCOME,
+        "食費",
+        "住居",
+        UNCATEGORIZED,
+      ]);
+    });
+
+    it("収入・未分類が支出の間に挟まっていても、その位置のまま", () => {
+      const existing: CategoryRecord[] = [
+        { name: "食費", color: CATEGORY_PALETTE[0]!, order: 0 },
+        { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 1 },
+        { name: "日用品", color: CATEGORY_PALETTE[1]!, order: 2 },
+        { name: INCOME, color: INCOME_COLOR, order: 3 },
+      ];
+
+      expect(namesOf(withAddedCategories(existing, ["住居"]))).toEqual([
+        "食費",
+        UNCATEGORIZED,
+        "日用品",
+        "住居",
+        INCOME,
+      ]);
+    });
+
+    it("新しいカテゴリは最後の支出カテゴリの直後に入る", () => {
+      const existing: CategoryRecord[] = [
+        { name: "食費", color: CATEGORY_PALETTE[0]!, order: 0 },
+        { name: INCOME, color: INCOME_COLOR, order: 1 },
+        { name: "日用品", color: CATEGORY_PALETTE[1]!, order: 2 },
+        { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 3 },
+      ];
+
+      expect(namesOf(withAddedCategories(existing, ["住居", "美容"]))).toEqual([
+        "食費",
+        INCOME,
+        "日用品",
+        "住居",
+        "美容",
+        UNCATEGORIZED,
+      ]);
+    });
+
+    it("支出カテゴリが1件も無ければ先頭に入る", () => {
+      const existing: CategoryRecord[] = [
+        { name: INCOME, color: INCOME_COLOR, order: 0 },
+        { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 1 },
+      ];
+
+      expect(namesOf(withAddedCategories(existing, ["住居"]))).toEqual([
+        "住居",
+        INCOME,
+        UNCATEGORIZED,
+      ]);
+    });
+
+    it("既存どうしの相対順を入れ替えない", () => {
+      const existing: CategoryRecord[] = [
+        { name: "日用品", color: CATEGORY_PALETTE[1]!, order: 0 },
+        { name: INCOME, color: INCOME_COLOR, order: 1 },
+        { name: "食費", color: CATEGORY_PALETTE[0]!, order: 2 },
+        { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 3 },
+      ];
+
+      const result = withAddedCategories(existing, ["住居"]);
+
+      expect(namesOf(result).filter((name) => name !== "住居")).toEqual([
+        "日用品",
+        INCOME,
+        "食費",
+        UNCATEGORIZED,
+      ]);
+    });
+  });
+
   it("並びが崩れたマスタでも order の昇順に整え直す", () => {
     const existing: CategoryRecord[] = [
       { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 9 },

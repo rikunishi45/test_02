@@ -80,7 +80,7 @@ export function defaultCategories(rules: readonly CategoryRule[]): CategoryRecor
   ];
 }
 
-/** 収入・未分類は支出カテゴリの後ろに固定する。並べ替えの対象にしない */
+/** 収入・未分類。初期値では支出カテゴリの後ろに置く */
 function isFixed(name: string): boolean {
   return name === INCOME || name === UNCATEGORIZED;
 }
@@ -100,8 +100,11 @@ function isFixed(name: string): boolean {
  * 色は**まだ使われていないパレットの色**から選ぶ。既定の色をそのまま使うと、
  * ユーザーが色を変えていない限り必ず既存のカテゴリと衝突する。
  *
- * 並びは支出カテゴリの末尾、収入・未分類の手前。`order` は 0 から振り直す
- * （`moveCategory` と同じ方針——飛び番や重複を残さない）。
+ * 新しいカテゴリは**最後の支出カテゴリの直後**に入れる。既存レコードの相対順は
+ * 変えない——`moveCategory` は収入・未分類の移動を禁じていないので、
+ * 「支出 → 収入 → 未分類」の並びは保証が無い。並べ直す形にすると、収入を上へ
+ * 動かしていた人の設定を移行が黙って戻す。`order` は 0 から振り直すが、
+ * 見えている順序は変わらない（`moveCategory` と同じ方針——飛び番を残さない）。
  */
 export function withAddedCategories(
   existing: readonly CategoryRecord[],
@@ -124,9 +127,19 @@ export function withAddedCategories(
 
   const ordered = [...existing].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
 
+  // 最後の支出カテゴリの直後。支出カテゴリが1つも無ければ先頭に置く
+  // （末尾に置くと、収入・未分類しか無いマスタで新しい支出が最後に付く）。
+  // `findLastIndex` は lib が ES2022 なので使わない（`tsconfig.json` は保護パス）。
+  let lastSpending = -1;
+  ordered.forEach((record, index) => {
+    if (!isFixed(record.name)) {
+      lastSpending = index;
+    }
+  });
+
   return [
-    ...ordered.filter((record) => !isFixed(record.name)),
+    ...ordered.slice(0, lastSpending + 1),
     ...fresh,
-    ...ordered.filter((record) => isFixed(record.name)),
+    ...ordered.slice(lastSpending + 1),
   ].map((record, index) => ({ ...record, order: index }));
 }
