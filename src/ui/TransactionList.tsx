@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { negateExpense, sumAll, sumByMonth } from "../aggregate/period.js";
 import { isCategorizable, UNCATEGORIZED, type LearnedCategories } from "../category/classify.js";
+import { colorOf } from "../category/color.js";
 import { expenseCategories } from "../category/manage.js";
 import type { TransactionSource } from "../domain/transaction.js";
 import {
@@ -11,7 +12,8 @@ import {
 } from "../list/query.js";
 import { PER_PAGE, clampPage, pageCount, pageRange, pageSlice } from "../list/paginate.js";
 import { deleteTransaction } from "../storage/db.js";
-import type { StoredTransaction } from "../storage/schema.js";
+import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
+import { CategoryDot } from "./CategoryDot.js";
 import { TransactionEditor } from "./TransactionEditor.js";
 
 const YEN = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY" });
@@ -32,6 +34,8 @@ interface Props {
   transactions: StoredTransaction[];
   /** 絞り込みに出すカテゴリ。並び順はマスタのもの */
   categories: readonly string[];
+  /** 色を引くためのマスタ。並び順は `categories` 側を正とする */
+  master: readonly CategoryRecord[];
   learned: LearnedCategories;
   /** 摘要ごとに覚える。同じ摘要の取引はまとめて動く */
   onCategoryChange: (description: string, category: string) => void;
@@ -43,6 +47,7 @@ export function TransactionList({
   db,
   transactions,
   categories,
+  master,
   learned,
   onCategoryChange,
   onChanged,
@@ -223,27 +228,30 @@ export function TransactionList({
                   収入のカテゴリを直せると同じ摘要の支出まで動く。
                 */}
                 <td style={styles.td}>
-                  {isCategorizable(t) ? (
-                    <select
-                      value={t.category}
-                      onChange={(e) => onCategoryChange(t.description, e.target.value)}
-                      style={
-                        t.category === UNCATEGORIZED ? styles.selectUncategorized : styles.select
-                      }
-                    >
-                      {/*
-                        選択肢はマスタから作る。ルールの定数（CATEGORIES）から
-                        作ると、名前を変えたあとに存在しないカテゴリを選べる。
-                      */}
-                      {expenseCategories(categories).map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span style={styles.fixedCategory}>{t.category}</span>
-                  )}
+                  <span style={styles.categoryCell}>
+                    <CategoryDot color={colorOf(master, t.category)} />
+                    {isCategorizable(t) ? (
+                      <select
+                        value={t.category}
+                        onChange={(e) => onCategoryChange(t.description, e.target.value)}
+                        style={
+                          t.category === UNCATEGORIZED ? styles.selectUncategorized : styles.select
+                        }
+                      >
+                        {/*
+                          選択肢はマスタから作る。ルールの定数（CATEGORIES）から
+                          作ると、名前を変えたあとに存在しないカテゴリを選べる。
+                        */}
+                        {expenseCategories(categories).map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span style={styles.fixedCategory}>{t.category}</span>
+                    )}
+                  </span>
                 </td>
                 <td style={styles.tdNoWrap}>{SOURCE_LABEL[t.source]}</td>
                 <td
@@ -342,6 +350,8 @@ const styles = {
     fontWeight: 600,
   },
   td: { borderBottom: "1px solid var(--line)", padding: "6px 8px" },
+  // 色の点と選択欄を1行に保つ。列が狭いと点だけが上の行に置き去りになる。
+  categoryCell: { display: "inline-flex", alignItems: "center" },
   // 日付・元・金額・操作は折り返さない。折り返すと「カード」が縦に1文字ずつ並ぶ。
   tdNoWrap: {
     borderBottom: "1px solid var(--line)",
