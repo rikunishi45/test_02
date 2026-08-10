@@ -15,6 +15,7 @@ import {
   inMonth,
   inCategory,
   negateExpense,
+  netYen,
   type PeriodTotal,
   type CategoryTotal,
 } from "./period.js";
@@ -1421,5 +1422,60 @@ describe("shiftYear", () => {
 
   it("12か月動かした shiftMonth の年と一致する", () => {
     expect(shiftMonth("2026-07", 12).slice(0, 4)).toBe(shiftYear("2026", 1));
+  });
+});
+
+describe("netYen", () => {
+  it("収入が多ければ正になる", () => {
+    expect(netYen({ expenseYen: 30000, incomeYen: 250000 })).toBe(220000);
+  });
+
+  it("支出が多ければ負になる", () => {
+    expect(netYen({ expenseYen: 250000, incomeYen: 30000 })).toBe(-220000);
+  });
+
+  it("同額なら 0", () => {
+    expect(netYen({ expenseYen: 1000, incomeYen: 1000 })).toBe(0);
+  });
+
+  it("同額のときの 0 は +0（-￥0 と表示されない）", () => {
+    expectPlusZero(netYen({ expenseYen: 1000, incomeYen: 1000 }));
+  });
+
+  it("両方 0 なら +0", () => {
+    expectPlusZero(netYen({ expenseYen: 0, incomeYen: 0 }));
+  });
+
+  it("収入だけなら収入の額そのもの", () => {
+    expect(netYen({ expenseYen: 0, incomeYen: 250000 })).toBe(250000);
+  });
+
+  it("支出だけなら支出の符号を反転した額", () => {
+    expect(netYen({ expenseYen: 42202, incomeYen: 0 })).toBe(-42202);
+  });
+
+  it("1円の差も出る", () => {
+    expect(netYen({ expenseYen: 1000, incomeYen: 1001 })).toBe(1);
+    expect(netYen({ expenseYen: 1001, incomeYen: 1000 })).toBe(-1);
+  });
+
+  it("sumByMonth の結果をそのまま渡せる", () => {
+    const total = at(
+      sumByMonth([
+        tx({ date: "2026-07-01", amountYen: -1200 }),
+        tx({ date: "2026-07-25", amountYen: 300000 }),
+      ]),
+      0,
+    );
+
+    expect(netYen(total)).toBe(298800);
+  });
+
+  it("sumAll の結果をそのまま渡せる", () => {
+    expect(netYen(sumAll([tx({ amountYen: -1000 }), tx({ amountYen: 4000 })]))).toBe(3000);
+  });
+
+  it("空の集計は +0", () => {
+    expectPlusZero(netYen(sumAll([])));
   });
 });

@@ -171,6 +171,21 @@ export function negateExpense(expenseYen: number): number {
   return expenseYen === 0 ? 0 : -expenseYen;
 }
 
+/**
+ * 収支（収入 − 支出）。プラスなら残った額、マイナスなら足りなかった額。
+ *
+ * `PeriodTotal` はどちらも正の数で持つので、引き算はここで1回だけ行う。
+ * 画面で `income - expense` と書くと、`negateExpense` を通した表示用の値と
+ * 混ざったときに符号が二重に反転する——このプロジェクトで4回踏んでいる形
+ * （`.claude/rules/typescript.md`）。
+ *
+ * 両方 0 のときに `-0` を作らない。`0 - 0` は `+0` なので素直に引けるが、
+ * ここが将来 `-(expense - income)` の形に書き換わると `-0` が生まれる。
+ */
+export function netYen(total: Pick<PeriodTotal, "expenseYen" | "incomeYen">): number {
+  return total.incomeYen - total.expenseYen;
+}
+
 /** 指定した月（"YYYY-MM"）の取引だけを取り出す */
 export function inMonth(
   transactions: readonly StoredTransaction[],

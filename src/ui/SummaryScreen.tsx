@@ -14,6 +14,7 @@ import {
 } from "../aggregate/period.js";
 import { compareByCategory, type CategoryComparison } from "../aggregate/compare.js";
 import { layoutBars, maxOf, niceScale, yOf } from "../chart/bar-chart.js";
+import { clampNumber } from "../clamp-number.js";
 import { toIsoDate } from "../domain/date-parts.js";
 import {
   detectRecurring,
@@ -294,6 +295,11 @@ function Share({ value, of }: { value: number; of: number }) {
   );
 }
 
+/** ホバーで出す吹き出しの大きさ。中の文字はこの幅に収まる想定 */
+const POP_WIDTH = 132;
+const POP_HEIGHT = 42;
+const POP_GAP = 8;
+
 function MonthlyBars({
   months,
   selected,
@@ -305,6 +311,7 @@ function MonthlyBars({
   onSelect: (month: string) => void;
   mode: "month" | "year";
 }) {
+  const [hovered, setHovered] = useState<number | null>(null);
   const values = months.map((m) => m.expenseYen);
   const { max, ticks } = niceScale(maxOf(values), TICK_DIVISIONS);
   const bars = layoutBars(values, {
@@ -345,13 +352,31 @@ function MonthlyBars({
         {bars.map((bar, index) => {
           const period = months[index]!.period;
           return (
-            <g key={period} onClick={() => onSelect(period)} style={styles.barGroup}>
+            <g
+              key={period}
+              onClick={() => onSelect(period)}
+              onMouseEnter={() => setHovered(index)}
+              onMouseLeave={() => setHovered((current) => (current === index ? null : current))}
+              style={styles.barGroup}
+            >
+              {/*
+                当たり判定は棒ではなく列全体にする。棒が低い月（支出が少ない月）
+                ほどホバーしにくい、という状態を作らないため。
+              */}
+              <rect
+                x={AXIS_WIDTH + bar.x}
+                y={0}
+                width={bar.width}
+                height={CHART_HEIGHT}
+                fill="transparent"
+              />
               <rect
                 x={AXIS_WIDTH + bar.x}
                 y={bar.y}
                 width={bar.width}
                 height={bar.height}
                 fill={period === selected ? "var(--accent)" : "var(--bar)"}
+                opacity={hovered === index && period !== selected ? 0.8 : 1}
               />
               <text
                 x={AXIS_WIDTH + bar.x + bar.width / 2}
@@ -364,8 +389,55 @@ function MonthlyBars({
             </g>
           );
         })}
+
+        {hovered !== null && bars[hovered] !== undefined && (
+          <HoverPop total={months[hovered]!} bar={bars[hovered]!} />
+        )}
       </g>
     </svg>
+  );
+}
+
+/**
+ * 棒の上に出す吹き出し。
+ *
+ * **左右は図の中に収める**（`clampNumber`）。端の棒で中央に置くと軸の外へ
+ * はみ出して、数字が切れる。上にも収める——いちばん高い棒では棒の上に
+ * 余白が無いので、その場合は棒の中に重ねる。
+ *
+ * `pointerEvents: none` にしないと、吹き出し自体がホバーを奪って
+ * 出たり消えたりを繰り返す。
+ */
+function HoverPop({
+  total,
+  bar,
+}: {
+  total: PeriodTotal;
+  bar: { x: number; y: number; width: number; height: number };
+}) {
+  const center = AXIS_WIDTH + bar.x + bar.width / 2;
+  const x = clampNumber(
+    center - POP_WIDTH / 2,
+    AXIS_WIDTH,
+    AXIS_WIDTH + CHART_WIDTH - POP_WIDTH,
+  );
+  const y = clampNumber(bar.y - POP_HEIGHT - POP_GAP, 0, CHART_HEIGHT - POP_HEIGHT);
+
+  return (
+    <g style={styles.pop}>
+      <rect x={x} y={y} width={POP_WIDTH} height={POP_HEIGHT} rx={6} style={styles.popBox} />
+      <text x={x + 10} y={y + 17} style={styles.popPeriod}>
+        {total.period}
+      </text>
+      <text x={x + 10} y={y + 33} style={styles.popExpense}>
+        {YEN.format(negateExpense(total.expenseYen))}
+      </text>
+      {total.incomeYen > 0 && (
+        <text x={x + POP_WIDTH - 10} y={y + 33} textAnchor="end" style={styles.popIncome}>
+          +{YEN_SHORT.format(total.incomeYen)}
+        </text>
+      )}
+    </g>
   );
 }
 
@@ -378,6 +450,12 @@ const styles = {
   monthLabel: { fontSize: 11, fill: "currentColor", opacity: 0.7 },
   monthLabelActive: { fontSize: 11, fill: "currentColor", fontWeight: 700 },
   barGroup: { cursor: "pointer" },
+  // 吹き出しがホバーを奪うと、出た瞬間にマウスが外れて点滅する
+  pop: { pointerEvents: "none" },
+  popBox: { fill: "var(--surface-2)", stroke: "var(--line)" },
+  popPeriod: { fontSize: 11, fill: "currentColor", opacity: 0.7 },
+  popExpense: { fontSize: 13, fill: "var(--danger)", fontVariantNumeric: "tabular-nums" },
+  popIncome: { fontSize: 11, fill: "var(--income)", fontVariantNumeric: "tabular-nums" },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
   td: { borderBottom: "1px solid var(--line)", padding: "6px 8px" },
   th: {
