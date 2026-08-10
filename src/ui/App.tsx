@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  getAllBudgets,
   getAllCategories,
   getAllTransactions,
   getLearnedCategories,
@@ -10,7 +11,7 @@ import type { LearnedCategories } from "../category/classify.js";
 import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { categoryNames } from "../category/default-categories.js";
 import { reclassifyTransactions } from "../category/reclassify.js";
-import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
+import type { BudgetRecord, CategoryRecord, StoredTransaction } from "../storage/schema.js";
 import { useDatabase } from "./useDatabase.js";
 import { usePersistence } from "./usePersistence.js";
 import { AppShell, type NavItem } from "./AppShell.js";
@@ -21,18 +22,19 @@ import { CalendarScreen } from "./CalendarScreen.js";
 import { TransactionList } from "./TransactionList.js";
 import { HomeScreen } from "./HomeScreen.js";
 import { SummaryScreen } from "./SummaryScreen.js";
+import { BudgetScreen } from "./BudgetScreen.js";
 import { DataPanel } from "./DataPanel.js";
 import { CategoryPanel } from "./CategoryPanel.js";
 
 /**
- * 画面。ホームはまだ無い（段階6で足す）。
- * 順番はサイドバーの並びと同じ。
+ * 画面。順番はサイドバーの並びと同じ。
  */
-type Tab = "home" | "report" | "list" | "cash" | "calendar" | "import" | "settings";
+type Tab = "home" | "report" | "budget" | "list" | "cash" | "calendar" | "import" | "settings";
 
 const TITLES: Record<Tab, string> = {
   home: "ホーム",
   report: "レポート",
+  budget: "予算",
   list: "取引一覧",
   cash: "取引を入力",
   calendar: "カレンダー",
@@ -47,6 +49,7 @@ export function App() {
   const [transactions, setTransactions] = useState<StoredTransaction[]>([]);
   const [learned, setLearned] = useState<LearnedCategories>({});
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
+  const [budgets, setBudgets] = useState<BudgetRecord[]>([]);
 
   const db = database.status === "ready" ? database.db : null;
 
@@ -57,13 +60,15 @@ export function App() {
     if (db === null) {
       return;
     }
-    const [rows, learnedNow, categoryRecords] = await Promise.all([
+    const [rows, learnedNow, categoryRecords, budgetRecords] = await Promise.all([
       getAllTransactions(db),
       getLearnedCategories(db),
       getAllCategories(db),
+      getAllBudgets(db),
     ]);
     setLearned(learnedNow);
     setCategories(categoryRecords);
+    setBudgets(budgetRecords);
 
     // マスタに無いカテゴリは未分類に落とす。名前を変えてもルールは旧名を
     // 返し続けるので、渡さないと選択欄に現れないカテゴリの行が一覧に出る。
@@ -106,6 +111,7 @@ export function App() {
   const items: NavItem[] = [
     { id: "home", label: "ホーム" },
     { id: "report", label: "レポート" },
+    { id: "budget", label: "予算" },
     { id: "list", label: "取引一覧", count: transactions.length },
     { id: "cash", label: "取引を入力" },
     { id: "calendar", label: "カレンダー" },
@@ -123,6 +129,15 @@ export function App() {
     >
       {tab === "home" && <HomeScreen transactions={transactions} />}
       {tab === "report" && <SummaryScreen transactions={transactions} />}
+      {tab === "budget" && (
+        <BudgetScreen
+          db={database.db}
+          transactions={transactions}
+          categories={categoryOptions}
+          budgets={budgets}
+          onChanged={reload}
+        />
+      )}
       {tab === "list" && (
         <TransactionList
           db={database.db}
@@ -159,6 +174,7 @@ export function App() {
             categories={categories}
             transactions={transactions}
             learned={learned}
+            budgets={budgets}
             onChanged={reload}
           />
           <DataPanel

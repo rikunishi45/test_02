@@ -10,13 +10,15 @@ import {
 } from "../category/manage.js";
 import type { LearnedCategories } from "../category/classify.js";
 import { saveCategoryChange } from "../storage/db.js";
-import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
+import type { BudgetRecord, CategoryRecord, StoredTransaction } from "../storage/schema.js";
 
 interface Props {
   db: IDBDatabase;
   categories: readonly CategoryRecord[];
   transactions: readonly StoredTransaction[];
   learned: LearnedCategories;
+  /** 予算。カテゴリ名が変わると id ごと付け替わるので、判断に要る */
+  budgets: readonly BudgetRecord[];
   /**
    * 書き込みのあとに一覧を読み直す。**Promise を返すこと。**
    *
@@ -34,7 +36,7 @@ interface Props {
  * ここは結果を書いて読み直すだけ。付け替えはマスタ・取引・学習の3つに
  * またがるので、書き込みも1つのトランザクションに閉じてある。
  */
-export function CategoryPanel({ db, categories, transactions, learned, onChanged }: Props) {
+export function CategoryPanel({ db, categories, transactions, learned, budgets, onChanged }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [removing, setRemoving] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export function CategoryPanel({ db, categories, transactions, learned, onChanged
   // 止められないので、同期的に読める印で塞ぐ。
   const running = useRef(false);
 
-  const state: CategoryState = { categories, transactions, learned };
+  const state: CategoryState = { categories, transactions, learned, budgets };
 
   async function apply(result: CategoryResult) {
     if (!result.ok) {

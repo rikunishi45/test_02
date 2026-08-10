@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
+import { budgetId, type BudgetRecord, type CategoryRecord, type StoredTransaction } from "../storage/schema.js";
 import { INCOME, UNCATEGORIZED, type LearnedCategories } from "./classify.js";
 import {
   FIXED_CATEGORIES,
@@ -41,6 +41,7 @@ function stateOf(overrides: Partial<CategoryState> = {}): CategoryState {
     categories: [record("食費", 0), record("交通費", 1), record(INCOME, 2), record(UNCATEGORIZED, 3)],
     transactions: [],
     learned: {},
+    budgets: [],
     ...overrides,
   };
 }
@@ -676,8 +677,8 @@ describe("selectableCategories", () => {
 describe("ルールで分類された取引の付け替え", () => {
   const ruleClassified = stateOf({
     transactions: [
-      tx({ id: "a", category: "食費", description: "セブン－イレブン" }),
-      tx({ id: "b", category: "食費", description: "ゆめタウン" }),
+      tx({ id: "a", category: "食費", description: "コンビニA" }),
+      tx({ id: "b", category: "食費", description: "スーパーB" }),
     ],
     learned: {},
   });
@@ -686,8 +687,8 @@ describe("ルールで分類された取引の付け替え", () => {
     const change = expectOk(renameCategory(ruleClassified, "食費", "外食"));
 
     expect([...change.learned].sort((x, y) => x.description.localeCompare(y.description))).toEqual([
-      { description: "セブン－イレブン", category: "外食" },
-      { description: "ゆめタウン", category: "外食" },
+      { description: "コンビニA", category: "外食" },
+      { description: "スーパーB", category: "外食" },
     ]);
   });
 
@@ -755,5 +756,150 @@ describe("ルールで分類された取引の付け替え", () => {
     for (const transaction of change.transactions) {
       expect(pinned.get(transaction.description)).toBe(transaction.category);
     }
+  });
+});
+
+/**
+ * 予算のキーはカテゴリ名を含む（`budgetId`）。追従させないと旧名の予算が
+ * 孤立し、予算画面の和集合が「旧名＝予算あり・支出0」「新名＝予算外の支出」の
+ * 2行に割れて出る（Codex 指摘）。
+ */
+describe("予算の付け替え", () => {
+  function budget(month: string, category: string, amountYen: number): BudgetRecord {
+    return { id: budgetId(month, category), month, category, amountYen };
+  }
+
+  describe("名前を変えたとき", () => {
+    it("予算が新しい名前に移る", () => {
+      const state = stateOf({ budgets: [budget("2026-07", "食費", 50000)] });
+      const change = expectOk(renameCategory(state, "食費", "外食"));
+
+      expect(change.budgets).toEqual([budget("2026-07", "外食", 50000)]);
+    });
+
+    it("古い id が消される", () => {
+      const state = stateOf({ budgets: [budget("2026-07", "食費", 50000)] });
+      const change = expectOk(renameCategory(state, "食費", "外食"));
+
+      expect(change.removedBudgetIds).toEqual([budgetId("2026-07", "食費")]);
+    });
+
+    it("複数の月の予算がすべて移る", () => {
+      const state = stateOf({
+        budgets: [budget("2026-06", "食費", 40000), budget("2026-07", "食費", 50000)],
+      });
+      const change = expectOk(renameCategory(state, "食費", "外食"));
+
+      expect(change.budgets.map((b) => [b.month, b.amountYen])).toEqual([
+        ["2026-06", 40000],
+        ["2026-07", 50000],
+      ]);
+    });
+
+    it("他のカテゴリの予算は動かない", () => {
+      const state = stateOf({
+        budgets: [budget("2026-07", "食費", 50000), budget("2026-07", "交通費", 10000)],
+      });
+      const change = expectOk(renameCategory(state, "食費", "外食"));
+
+      expect(change.budgets.map((b) => b.category)).toEqual(["外食"]);
+      expect(change.removedBudgetIds).toEqual([budgetId("2026-07", "食費")]);
+    });
+
+    it("予算が無ければ何も動かない", () => {
+      const change = expectOk(renameCategory(stateOf(), "食費", "外食"));
+
+      expect(change.budgets).toEqual([]);
+      expect(change.removedBudgetIds).toEqual([]);
+    });
+
+    it("額は変わらない", () => {
+      const state = stateOf({ budgets: [budget("2026-07", "食費", 12345)] });
+
+      expect(expectOk(renameCategory(state, "食費", "外食")).budgets[0]?.amountYen).toBe(12345);
+    });
+  });
+
+  describe("削除して付け替えたとき", () => {
+    it("予算が付け替え先に移る", () => {
+      const state = stateOf({ budgets: [budget("2026-07", "食費", 50000)] });
+      const change = expectOk(removeCategory(state, "食費", "交通費"));
+
+      expect(change.budgets).toEqual([budget("2026-07", "交通費", 50000)]);
+      expect(change.removedBudgetIds).toEqual([budgetId("2026-07", "食費")]);
+    });
+
+    // 取引が移るので、使ってよい額も一緒に移らないと付け替え先が理由もなく
+    // 超過する。月の総額は付け替えの前後で変わらない。
+    it("付け替え先に同じ月の予算があれば足される", () => {
+      const state = stateOf({
+        budgets: [budget("2026-07", "食費", 50000), budget("2026-07", "交通費", 10000)],
+      });
+      const change = expectOk(removeCategory(state, "食費", "交通費"));
+
+      expect(change.budgets).toEqual([budget("2026-07", "交通費", 60000)]);
+    });
+
+    it("月が違えば足されない", () => {
+      const state = stateOf({
+        budgets: [budget("2026-07", "食費", 50000), budget("2026-06", "交通費", 10000)],
+      });
+      const change = expectOk(removeCategory(state, "食費", "交通費"));
+
+      expect(change.budgets).toEqual([budget("2026-07", "交通費", 50000)]);
+    });
+
+    it("月の予算の総額が付け替えの前後で変わらない", () => {
+      const state = stateOf({
+        budgets: [budget("2026-07", "食費", 50000), budget("2026-07", "交通費", 10000)],
+      });
+      const before = state.budgets.reduce((sum, b) => sum + b.amountYen, 0);
+      const change = expectOk(removeCategory(state, "食費", "交通費"));
+      const removed = new Set(change.removedBudgetIds);
+      const after =
+        state.budgets.filter((b) => !removed.has(b.id) && b.category !== "交通費").reduce((s, b) => s + b.amountYen, 0) +
+        change.budgets.reduce((s, b) => s + b.amountYen, 0);
+
+      expect(after).toBe(before);
+    });
+
+    it("未分類へ付け替えても予算は移る", () => {
+      const state = stateOf({ budgets: [budget("2026-07", "食費", 50000)] });
+      const change = expectOk(removeCategory(state, "食費", UNCATEGORIZED));
+
+      expect(change.budgets).toEqual([budget("2026-07", UNCATEGORIZED, 50000)]);
+    });
+
+    it("予算が無ければ何も動かない", () => {
+      const change = expectOk(removeCategory(stateOf(), "食費", "交通費"));
+
+      expect(change.budgets).toEqual([]);
+      expect(change.removedBudgetIds).toEqual([]);
+    });
+  });
+
+  describe("色と並び順は予算に触らない", () => {
+    it("色を変えても予算は動かない", () => {
+      const change = expectOk(recolorCategory(stateOf().categories, "食費", "#ff0000"));
+
+      expect(change.budgets).toEqual([]);
+      expect(change.removedBudgetIds).toEqual([]);
+    });
+
+    it("並び順を変えても予算は動かない", () => {
+      const change = expectOk(moveCategory(stateOf().categories, "交通費", -1));
+
+      expect(change.budgets).toEqual([]);
+      expect(change.removedBudgetIds).toEqual([]);
+    });
+  });
+
+  it("元の予算の配列を書き換えない", () => {
+    const budgets = [budget("2026-07", "食費", 50000)];
+    const snapshot = structuredClone(budgets);
+
+    renameCategory(stateOf({ budgets }), "食費", "外食");
+
+    expect(budgets).toEqual(snapshot);
   });
 });

@@ -4,6 +4,7 @@ import { defaultCategories } from "../category/default-categories.js";
 import type { CategoryChange } from "../category/manage.js";
 import type { BackupData } from "./backup.js";
 import {
+  budgetId,
   DB_NAME,
   DB_VERSION,
   STORE_BUDGETS,
@@ -201,6 +202,36 @@ export async function deleteTransaction(db: IDBDatabase, id: string): Promise<vo
 }
 
 /**
+ * 月×カテゴリの予算を1件書く。**額が 0 以下ならレコードを消す。**
+ *
+ * 「0円の予算」を持たせない。持たせると達成率の分母が 0 になり、率の欄だけが
+ * 意味を失う行が混ざる（`progress.ts` の `ratioOf`）。**予算を外す操作**を
+ * 別の口にせず、入力欄を空にする＝0 を渡す＝消える、で一本化する
+ * （`setLearnedCategory` が `UNCATEGORIZED` で学習を消すのと同じ形）。
+ *
+ * マップ全体ではなく1件だけを受け取る。全体を受けると呼び出し側が
+ * 「読む → 直す → 書き戻す」をせざるを得ず、2件を続けて直したときに
+ * 1件目が黙って消える（lost update）。
+ */
+export async function setBudget(
+  db: IDBDatabase,
+  month: string,
+  category: string,
+  amountYen: number,
+): Promise<void> {
+  const tx = db.transaction(STORE_BUDGETS, "readwrite");
+  const store = tx.objectStore(STORE_BUDGETS);
+  const id = budgetId(month, category);
+  await writeAll(tx, () => {
+    if (amountYen <= 0) {
+      store.delete(id);
+    } else {
+      store.put({ id, month, category, amountYen });
+    }
+  });
+}
+
+/**
  * カテゴリの付け替えをまとめて書く。マスタ・取引・学習を**1つのトランザクション**で。
  *
  * 分けて書くと、途中で失敗したときに「一覧では外食だが、次の再読み込みで
@@ -212,7 +243,7 @@ export async function deleteTransaction(db: IDBDatabase, id: string): Promise<vo
  */
 export async function saveCategoryChange(db: IDBDatabase, change: CategoryChange): Promise<void> {
   const tx = db.transaction(
-    [STORE_CATEGORIES, STORE_TRANSACTIONS, STORE_LEARNED_CATEGORIES],
+    [STORE_CATEGORIES, STORE_TRANSACTIONS, STORE_LEARNED_CATEGORIES, STORE_BUDGETS],
     "readwrite",
   );
   await writeAll(tx, () => {
@@ -233,6 +264,16 @@ export async function saveCategoryChange(db: IDBDatabase, change: CategoryChange
     }
     for (const description of change.forget) {
       learned.delete(description);
+    }
+
+    // 予算のキーはカテゴリ名を含むので、名前が変わると id ごと作り直しになる。
+    // 消してから入れる（同じ id なら put が上書きするので順序は問わない）。
+    const budgets = tx.objectStore(STORE_BUDGETS);
+    for (const id of change.removedBudgetIds) {
+      budgets.delete(id);
+    }
+    for (const record of change.budgets) {
+      budgets.put(record);
     }
   });
 }

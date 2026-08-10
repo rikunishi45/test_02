@@ -1,4 +1,4 @@
-import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
+import { budgetId, type BudgetRecord, type CategoryRecord, type StoredTransaction } from "../storage/schema.js";
 import { INCOME, UNCATEGORIZED, isCategorizable, type LearnedCategories } from "./classify.js";
 
 /** 名前を変えられない・消せないカテゴリ */
@@ -29,6 +29,18 @@ export interface CategoryChange {
    * `setLearnedCategory` が `UNCATEGORIZED` で削除するのと同じ約束。
    */
   forget: string[];
+  /**
+   * 書き戻す予算。**予算のキーはカテゴリ名を含む**（`budgetId`）ので、名前が
+   * 変わると id ごと作り直しになる。古い id は `removedBudgetIds` で消す。
+   *
+   * 追従させないと、旧名の予算が孤立して残る。しかも段階7の一覧は
+   * 「予算のある行と支出のある行の和集合」なので、**旧名が「予算あり・支出0」の
+   * 行として、新名が「予算外の支出」として別々に出る**——落ちも警告も出ない
+   * （Codex 指摘）。
+   */
+  budgets: BudgetRecord[];
+  /** 消す予算の id */
+  removedBudgetIds: string[];
 }
 
 export type CategoryResult =
@@ -41,12 +53,15 @@ const NO_CHANGE = (categories: readonly CategoryRecord[]): CategoryChange => ({
   transactions: [],
   learned: [],
   forget: [],
+  budgets: [],
+  removedBudgetIds: [],
 });
 
 export interface CategoryState {
   categories: readonly CategoryRecord[];
   transactions: readonly StoredTransaction[];
   learned: LearnedCategories;
+  budgets: readonly BudgetRecord[];
 }
 
 /**
@@ -88,6 +103,7 @@ export function renameCategory(state: CategoryState, from: string, to: string): 
       ),
       transactions: movedTransactions(state.transactions, from, name),
       ...movedLearned(state, from, name),
+      ...movedBudgets(state, from, name),
     },
   };
 }
@@ -122,6 +138,7 @@ export function removeCategory(
       categories: state.categories.filter((record) => record.name !== name),
       transactions: movedTransactions(state.transactions, name, reassignTo),
       ...movedLearned(state, name, reassignTo),
+      ...movedBudgets(state, name, reassignTo),
     },
   };
 }
@@ -231,6 +248,37 @@ function movedLearned(
   return {
     learned: [...descriptions].map((description) => ({ description, category: to })),
     forget: [],
+  };
+}
+
+/**
+ * 予算の付け替え。月ごとに、`from` の予算を `to` へ移す。
+ *
+ * **移す先に同じ月の予算が既にあれば足す。** 取引（＝支出）が移るので、
+ * 使ってよい額も一緒に移らないと、移した先が理由もなく超過する。
+ * `schema.ts` の「総額はカテゴリ別予算の合計」に従えば、月の総額は
+ * 付け替えの前後で変わらないのが筋。
+ */
+function movedBudgets(
+  state: CategoryState,
+  from: string,
+  to: string,
+): { budgets: BudgetRecord[]; removedBudgetIds: string[] } {
+  const moving = state.budgets.filter((record) => record.category === from);
+  const existing = new Map(
+    state.budgets
+      .filter((record) => record.category === to)
+      .map((record) => [record.month, record.amountYen]),
+  );
+
+  return {
+    budgets: moving.map((record) => ({
+      id: budgetId(record.month, to),
+      month: record.month,
+      category: to,
+      amountYen: record.amountYen + (existing.get(record.month) ?? 0),
+    })),
+    removedBudgetIds: moving.map((record) => record.id),
   };
 }
 
