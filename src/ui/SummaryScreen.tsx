@@ -14,6 +14,7 @@ import {
   type PeriodTotal,
 } from "../aggregate/period.js";
 import { compareByCategory, type CategoryComparison } from "../aggregate/compare.js";
+import { colorOf } from "../category/color.js";
 import { layoutBars, maxOf, niceScale, yOf } from "../chart/bar-chart.js";
 import { clampNumber } from "../clamp-number.js";
 import { toIsoDate } from "../domain/date-parts.js";
@@ -23,7 +24,8 @@ import {
   totalMonthlyYen,
   type RecurringCharge,
 } from "../recurring/detect.js";
-import type { StoredTransaction } from "../storage/schema.js";
+import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
+import { CategoryDot } from "./CategoryDot.js";
 
 const YEN = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY" });
 const YEN_SHORT = new Intl.NumberFormat("ja-JP", { notation: "compact" });
@@ -45,7 +47,13 @@ const MODES: readonly (readonly [Mode, string])[] = [
   ["range", "期間"],
 ];
 
-export function SummaryScreen({ transactions }: { transactions: StoredTransaction[] }) {
+export function SummaryScreen({
+  transactions,
+  categories: master,
+}: {
+  transactions: StoredTransaction[];
+  categories: readonly CategoryRecord[];
+}) {
   const months = sumByMonth(transactions);
   const years = sumByYear(transactions);
   const [mode, setMode] = useState<Mode>("month");
@@ -149,7 +157,11 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
         comparison.length === 0 ? (
           <p>この期間の支出はありません。</p>
         ) : (
-          <ComparisonTable rows={comparison} label={mode === "year" ? "前年比" : "先月比"} />
+          <ComparisonTable
+            rows={comparison}
+            label={mode === "year" ? "前年比" : "先月比"}
+            master={master}
+          />
         )
       ) : categories.length === 0 ? (
         <p>この期間の支出はありません。</p>
@@ -158,10 +170,17 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
           <tbody>
             {categories.map((c) => (
               <tr key={c.category}>
-                <td style={styles.td}>{c.category}</td>
+                <td style={styles.td}>
+                  <CategoryDot color={colorOf(master, c.category)} />
+                  {c.category}
+                </td>
                 <td style={styles.amountCell}>{YEN.format(negateExpense(c.expenseYen))}</td>
                 <td style={{ ...styles.td, width: "50%" }}>
-                  <Share value={c.expenseYen} of={categories[0]!.expenseYen} />
+                  <Share
+                    value={c.expenseYen}
+                    of={categories[0]!.expenseYen}
+                    color={colorOf(master, c.category)}
+                  />
                 </td>
               </tr>
             ))}
@@ -185,7 +204,15 @@ function latestDate(transactions: readonly StoredTransaction[]): string {
  * 差は**金額で出して率は出さない。** 前期が0円のカテゴリで率が無限大になり、
  * 「新しく使い始めた」ことを伝えるのに率は向かない。
  */
-function ComparisonTable({ rows, label }: { rows: readonly CategoryComparison[]; label: string }) {
+function ComparisonTable({
+  rows,
+  label,
+  master,
+}: {
+  rows: readonly CategoryComparison[];
+  label: string;
+  master: readonly CategoryRecord[];
+}) {
   const peak = rows[0]?.expenseYen ?? 0;
 
   return (
@@ -201,13 +228,18 @@ function ComparisonTable({ rows, label }: { rows: readonly CategoryComparison[];
       <tbody>
         {rows.map((row) => (
           <tr key={row.category}>
-            <td style={styles.td}>{row.category}</td>
+            <td style={styles.td}>
+              <CategoryDot color={colorOf(master, row.category)} />
+              {row.category}
+            </td>
             <td style={styles.amountCell}>{YEN.format(negateExpense(row.expenseYen))}</td>
             <td style={{ ...styles.amountCell, ...deltaStyle(row.deltaYen) }}>
               {formatDelta(row.deltaYen)}
             </td>
             <td style={{ ...styles.td, width: "40%" }}>
-              {peak > 0 && <Share value={row.expenseYen} of={peak} />}
+              {peak > 0 && (
+                <Share value={row.expenseYen} of={peak} color={colorOf(master, row.category)} />
+              )}
             </td>
           </tr>
         ))}
@@ -284,11 +316,11 @@ function RecurringRow({ charge }: { charge: RecurringCharge }) {
   );
 }
 
-function Share({ value, of }: { value: number; of: number }) {
+function Share({ value, of, color }: { value: number; of: number; color: string }) {
   // 幅の比だけ。0除算は of > 0 が保証される（先頭要素は最大かつ支出のみ）。
   return (
     <span style={styles.shareTrack}>
-      <span style={{ ...styles.shareFill, width: `${(value / of) * 100}%` }} />
+      <span style={{ ...styles.shareFill, width: `${(value / of) * 100}%`, background: color }} />
     </span>
   );
 }

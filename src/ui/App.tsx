@@ -127,8 +127,8 @@ export function App() {
       title={TITLES[tab]}
       banner={<PersistenceBanner state={persistence.state} />}
     >
-      {tab === "home" && <HomeScreen transactions={transactions} />}
-      {tab === "report" && <SummaryScreen transactions={transactions} />}
+      {tab === "home" && <HomeScreen transactions={transactions} categories={categories} />}
+      {tab === "report" && <SummaryScreen transactions={transactions} categories={categories} />}
       {tab === "budget" && (
         <BudgetScreen
           db={database.db}
@@ -143,6 +143,7 @@ export function App() {
           db={database.db}
           transactions={transactions}
           categories={categoryOptions}
+          master={categories}
           learned={learned}
           onCategoryChange={(description, category) => void changeCategory(description, category)}
           onChanged={reload}
