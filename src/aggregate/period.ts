@@ -88,6 +88,32 @@ export function sumByDay(transactions: readonly StoredTransaction[]): PeriodTota
 }
 
 /**
+ * 期間で割らずに全件を合計する。絞り込みに追従する合計を出すため。
+ *
+ * `sumByMonth` の結果を足し合わせる形では書かない。絞り込んだ集合が複数の月に
+ * またがるとき、月ごとに丸めた値を足すことになるわけではないが、**「画面に
+ * 並んでいる行の合計」と「合計欄の数字」を別経路で出すと食い違う**
+ * （`totalOfCells` と同じ理由）。渡された集合をそのまま1回で足す。
+ *
+ * 支出・収入とも正の数で返す。空の集合では両方 +0（`-0` にしない）。
+ */
+export function sumAll(transactions: readonly StoredTransaction[]): {
+  expenseYen: number;
+  incomeYen: number;
+} {
+  let expenseYen = 0;
+  let incomeYen = 0;
+  for (const transaction of transactions) {
+    if (transaction.amountYen < 0) {
+      expenseYen -= transaction.amountYen;
+    } else if (transaction.amountYen > 0) {
+      incomeYen += transaction.amountYen;
+    }
+  }
+  return { expenseYen, incomeYen };
+}
+
+/**
  * カテゴリごとの支出を合計する。支出の多い順。同額ならカテゴリ名の昇順。
  *
  * 並び順を額だけで決めると、同額のカテゴリの順序が入力順に依存して、

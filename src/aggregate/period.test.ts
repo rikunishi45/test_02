@@ -6,6 +6,7 @@ import {
   shiftMonth,
   sumByMonth,
   sumByDay,
+  sumAll,
   sumByCategory,
   inMonth,
   inCategory,
@@ -1056,5 +1057,119 @@ describe("inCategory", () => {
     const summed = sumByMonth(inCategory(transactions, "食費"));
 
     expect(at(summed, 0).expenseYen).toBe(2000);
+  });
+});
+
+describe("sumAll", () => {
+  describe("空と 0", () => {
+    it("空の配列は支出も収入も 0", () => {
+      expect(sumAll([])).toEqual({ expenseYen: 0, incomeYen: 0 });
+    });
+
+    it("空の配列の expenseYen は +0（-0 にならない）", () => {
+      expectPlusZero(sumAll([]).expenseYen);
+    });
+
+    it("支出だけのとき incomeYen は +0", () => {
+      expectPlusZero(sumAll([tx({ amountYen: -1200 })]).incomeYen);
+    });
+
+    it("収入だけのとき expenseYen は +0", () => {
+      expectPlusZero(sumAll([tx({ amountYen: 250000 })]).expenseYen);
+    });
+
+    it("0円の取引はどちらにも数えない", () => {
+      expect(sumAll([tx({ amountYen: 0 })])).toEqual({ expenseYen: 0, incomeYen: 0 });
+    });
+
+    it("-0 円の取引もどちらにも数えない", () => {
+      const total = sumAll([tx({ amountYen: -0 })]);
+
+      expectPlusZero(total.expenseYen);
+      expectPlusZero(total.incomeYen);
+    });
+  });
+
+  describe("符号ごとに合計する", () => {
+    it("支出は符号を反転した正の数で返る", () => {
+      expect(sumAll([tx({ amountYen: -1200 })]).expenseYen).toBe(1200);
+    });
+
+    it("収入はそのままの正の数で返る", () => {
+      expect(sumAll([tx({ amountYen: 250000 })]).incomeYen).toBe(250000);
+    });
+
+    it("支出と収入は相殺されない", () => {
+      const total = sumAll([tx({ amountYen: -1000 }), tx({ amountYen: 1000 })]);
+
+      expect(total).toEqual({ expenseYen: 1000, incomeYen: 1000 });
+    });
+
+    it("複数件を足し合わせる", () => {
+      const total = sumAll([
+        tx({ amountYen: -1200 }),
+        tx({ amountYen: -800 }),
+        tx({ amountYen: 250000 }),
+      ]);
+
+      expect(total).toEqual({ expenseYen: 2000, incomeYen: 250000 });
+    });
+
+    it("1件だけならその額", () => {
+      expect(sumAll([tx({ amountYen: -42202 })])).toEqual({ expenseYen: 42202, incomeYen: 0 });
+    });
+  });
+
+  describe("期間で割らない", () => {
+    it("月をまたいでも1つの合計になる", () => {
+      const total = sumAll([
+        tx({ date: "2026-06-30", amountYen: -1000 }),
+        tx({ date: "2026-07-01", amountYen: -2000 }),
+        tx({ date: "2027-01-01", amountYen: -3000 }),
+      ]);
+
+      expect(total.expenseYen).toBe(6000);
+    });
+
+    it("同じ集合を渡せば、月別の合計を足し上げた値と一致する", () => {
+      const transactions = [
+        tx({ date: "2026-06-30", amountYen: -1000 }),
+        tx({ date: "2026-07-01", amountYen: -2000 }),
+        tx({ date: "2026-07-02", amountYen: 5000 }),
+      ];
+      const byMonth = sumByMonth(transactions);
+
+      expect(sumAll(transactions)).toEqual({
+        expenseYen: byMonth.reduce((sum, month) => sum + month.expenseYen, 0),
+        incomeYen: byMonth.reduce((sum, month) => sum + month.incomeYen, 0),
+      });
+    });
+
+    it("並び順を変えても同じ合計になる", () => {
+      const transactions = [
+        tx({ date: "2026-07-01", amountYen: -1000 }),
+        tx({ date: "2026-06-01", amountYen: 2000 }),
+        tx({ date: "2026-08-01", amountYen: -3000 }),
+      ];
+
+      expect(sumAll([...transactions].reverse())).toEqual(sumAll(transactions));
+    });
+  });
+
+  describe("入力を書き換えない", () => {
+    it("呼び出しの前後で内容が変わらない", () => {
+      expectInputUnchanged(
+        [tx({ amountYen: -1200 }), tx({ amountYen: 250000 })],
+        (input) => sumAll(input),
+      );
+    });
+
+    it("凍結された配列を渡しても動く", () => {
+      const transactions = Object.freeze([
+        Object.freeze(tx({ amountYen: -1200 })),
+      ]) as readonly StoredTransaction[];
+
+      expect(sumAll(transactions)).toEqual({ expenseYen: 1200, incomeYen: 0 });
+    });
   });
 });

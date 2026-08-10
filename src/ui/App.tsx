@@ -117,6 +117,7 @@ export function App() {
         <TransactionList
           db={database.db}
           transactions={transactions}
+          categories={categories}
           learned={learned}
           onCategoryChange={(description, category) => void changeCategory(description, category)}
           onChanged={reload}
