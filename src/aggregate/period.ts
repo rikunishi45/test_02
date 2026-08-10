@@ -160,7 +160,7 @@ export function sumByCategory(transactions: readonly StoredTransaction[]): Categ
 /**
  * 支出の大きさを、元帳の符号（支出は負）に戻す。**0 は `+0` のまま返す。**
  *
- * 集計は支出を正の数で持つが、画面では `-￥42,202` と符号付きで出したい。
+ * 集計は支出を正の数で持つが、画面では `-￥12,345` と符号付きで出したい。
  * そこで単純に `-expenseYen` と書くと、支出が0の月（収入だけの月は普通にある）で
  * `-0` になり、`Intl.NumberFormat` が `-￥0` と表示する。
  *
