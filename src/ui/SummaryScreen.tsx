@@ -6,6 +6,7 @@ import {
   negateExpense,
   shiftMonth,
   shiftYear,
+  sumAll,
   sumByCategory,
   sumByMonth,
   sumByYear,
@@ -85,8 +86,9 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
 
   const categories = sumByCategory(current);
   const comparison = previous === null ? null : compareByCategory(current, previous);
-  const total = periods.find((p) => p.period === period);
-  const rangeTotal = sumByCategory(current).reduce((sum, c) => sum + c.expenseYen, 0);
+  // 3モードとも `current` から出す。期間指定だけ別経路で合計すると、そちらに
+  // 収入が乗らない（実際に収入が出ないまま残っていた）。合計は壁の中の `sumAll`。
+  const total = sumAll(current);
 
   return (
     <section>
@@ -133,13 +135,9 @@ export function SummaryScreen({ transactions }: { transactions: StoredTransactio
 
       <h2 style={styles.h2}>
         {mode === "range" ? `${rangeFrom} 〜 ${rangeTo}` : period} の内訳
-        <span style={styles.total}>
-          {YEN.format(negateExpense(mode === "range" ? rangeTotal : (total?.expenseYen ?? 0)))}
-        </span>
+        <span style={styles.total}>{YEN.format(negateExpense(total.expenseYen))}</span>
       </h2>
-      {mode !== "range" && total !== undefined && total.incomeYen > 0 && (
-        <p style={styles.income}>収入 {YEN.format(total.incomeYen)}</p>
-      )}
+      {total.incomeYen > 0 && <p style={styles.income}>収入 {YEN.format(total.incomeYen)}</p>}
 
       {/*
         比較があるときは、今期の支出が0でも表を出す。前期にしか無い行こそ
