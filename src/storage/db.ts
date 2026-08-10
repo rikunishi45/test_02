@@ -313,6 +313,50 @@ export async function setLearnedCategory(
 }
 
 /**
+ * すべてのデータを消す。**取り消せない。** 呼ぶ前にバックアップを促すこと。
+ *
+ * **カテゴリのマスタだけは初期値を入れ直す。** 空にすると、カテゴリの選択欄が
+ * 空になり、`reclassifyTransactions` に渡す `known` も空になって、以後の
+ * 取り込みが全件未分類になる——マスタを作るのは `openDatabase` の
+ * versionchange だけで、消しても作り直されない。「消した」の行き先は
+ * 初回起動と同じ状態であって、カテゴリが1つも無い状態ではない。
+ *
+ * `replaceAll` と同じく1つのトランザクションで消す。途中で失敗して
+ * 「取引だけ消えて学習が残る」状態を作らない。
+ */
+export async function clearAllData(db: IDBDatabase): Promise<void> {
+  const tx = db.transaction(
+    [
+      STORE_TRANSACTIONS,
+      STORE_IMPORTS,
+      STORE_COLUMN_MAPPINGS,
+      STORE_LEARNED_CATEGORIES,
+      STORE_CATEGORIES,
+      STORE_BUDGETS,
+    ],
+    "readwrite",
+  );
+
+  await writeAll(tx, () => {
+    for (const store of [
+      STORE_TRANSACTIONS,
+      STORE_IMPORTS,
+      STORE_COLUMN_MAPPINGS,
+      STORE_LEARNED_CATEGORIES,
+      STORE_BUDGETS,
+    ]) {
+      tx.objectStore(store).clear();
+    }
+
+    const categories = tx.objectStore(STORE_CATEGORIES);
+    categories.clear();
+    for (const record of defaultCategories(DEFAULT_CATEGORY_RULES)) {
+      categories.put(record);
+    }
+  });
+}
+
+/**
  * バックアップから全データを復元する。既存のデータは消える。
  *
  * 1つのトランザクションでまとめて行う。途中で失敗したときに

@@ -14,12 +14,14 @@ import {
   putTransactions,
   deleteTransaction,
   saveCategoryChange,
+  clearAllData,
 } from "./db.js";
 import { budgetId, type CategoryRecord, type StoredTransaction, type ImportRecord, type NamedColumnMapping } from "./schema.js";
 import type { CategoryChange } from "../category/manage.js";
 import { BACKUP_FORMAT_VERSION, type BackupData } from "./backup.js";
 import {
   classifyDescription,
+  INCOME,
   UNCATEGORIZED,
   type CategoryRule,
   type LearnedCategories,
@@ -2535,5 +2537,171 @@ describe("saveCategoryChange", () => {
 });
 
 function byName2(rows: readonly CategoryRecord[]): CategoryRecord[] {
+  return [...rows].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+describe("clearAllData", () => {
+  /**
+   * **6ストアすべてに1件以上入った状態**を作る。
+   *
+   * 予算は書き込む口が `replaceAll` しか無いので、それでまとめて入れる。
+   * 空のまま「消えたこと」を確かめると、消していなくても通る（Codex 指摘）。
+   */
+  async function seedEverything(db: IDBDatabase): Promise<void> {
+    await replaceAll(
+      db,
+      backupOf({
+        transactions: [transactionOf({ id: "a" }), transactionOf({ id: "b" })],
+        imports: [importOf({ id: "i-1", fileName: "seed.csv" })],
+        columnMappings: [namedMappingOf({ name: "seed-マッピング" })],
+        learnedCategories: learnedOf([["セブン", "食費"]]),
+        categories: [{ name: "外食", color: "#111111", order: 0 }],
+        budgets: [{ id: budgetId("2026-07", "外食"), month: "2026-07", category: "外食", amountYen: 30000 }],
+      }),
+    );
+  }
+
+  /** 消す前に本当に入っていたか。入っていなければ「消えた」は無意味 */
+  async function expectSeeded(db: IDBDatabase): Promise<void> {
+    expect(await getAllTransactions(db)).not.toEqual([]);
+    expect(await getAllImports(db)).not.toEqual([]);
+    expect(await getAllColumnMappings(db)).not.toEqual([]);
+    expect(await getLearnedCategories(db)).not.toEqual({});
+    expect(await getAllBudgets(db)).not.toEqual([]);
+  }
+
+  describe("消える", () => {
+    it("取引が空になる", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+      expect(await getAllTransactions(db)).not.toEqual([]);
+
+      await clearAllData(db);
+
+      expect(await getAllTransactions(db)).toEqual([]);
+    });
+
+    it("取り込み履歴が空になる", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+      expect(await getAllImports(db)).not.toEqual([]);
+
+      await clearAllData(db);
+
+      expect(await getAllImports(db)).toEqual([]);
+    });
+
+    it("列マッピングが空になる", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+      expect(await getAllColumnMappings(db)).not.toEqual([]);
+
+      await clearAllData(db);
+
+      expect(await getAllColumnMappings(db)).toEqual([]);
+    });
+
+    it("学習したカテゴリが空になる", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+      expect(await getLearnedCategories(db)).not.toEqual({});
+
+      await clearAllData(db);
+
+      expect(await getLearnedCategories(db)).toEqual({});
+    });
+
+    it("消す前に6ストアすべてが埋まっている（この describe の前提）", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+
+      await expectSeeded(db);
+    });
+
+    it("予算が空になる", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+      expect(await getAllBudgets(db)).not.toEqual([]);
+
+      await clearAllData(db);
+
+      expect(await getAllBudgets(db)).toEqual([]);
+    });
+  });
+
+  describe("カテゴリのマスタは初期値に戻る", () => {
+    // 空にすると選択欄が空になり、以後の取り込みが全件未分類になる。マスタを
+    // 作るのは versionchange だけで、消しても作り直されない。
+    it("空にはならない", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+
+      await clearAllData(db);
+
+      expect((await getAllCategories(db)).length).toBeGreaterThan(0);
+    });
+
+    it("初回起動と同じ内容になる", async () => {
+      const db = await freshDatabase();
+      const initial = await getAllCategories(db);
+      await seedEverything(db);
+
+      await clearAllData(db);
+
+      expect(byId2(await getAllCategories(db))).toEqual(byId2(initial));
+    });
+
+    it("消す前に足した・変えたカテゴリは残らない", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+      expect((await getAllCategories(db)).map((c) => c.name)).toEqual(["外食"]);
+
+      await clearAllData(db);
+
+      expect((await getAllCategories(db)).map((c) => c.name)).not.toContain("外食");
+    });
+
+    it("初期値には収入と未分類が含まれる", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+
+      await clearAllData(db);
+
+      const names = (await getAllCategories(db)).map((c) => c.name);
+      expect(names).toContain(INCOME);
+      expect(names).toContain(UNCATEGORIZED);
+    });
+  });
+
+  describe("繰り返しと空の状態", () => {
+    it("空のデータベースに対しても失敗しない", async () => {
+      const db = await freshDatabase();
+
+      await expect(clearAllData(db)).resolves.toBeUndefined();
+    });
+
+    it("2回続けて呼んでも失敗しない", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+
+      await clearAllData(db);
+      await expect(clearAllData(db)).resolves.toBeUndefined();
+
+      expect(await getAllTransactions(db)).toEqual([]);
+    });
+
+    it("消したあとに書き込める（使い続けられる状態になっている）", async () => {
+      const db = await freshDatabase();
+      await seedEverything(db);
+
+      await clearAllData(db);
+      await putTransactions(db, [transactionOf({ id: "new" })]);
+
+      expect((await getAllTransactions(db)).map((t) => t.id)).toEqual(["new"]);
+    });
+  });
+});
+
+function byId2(rows: readonly CategoryRecord[]): CategoryRecord[] {
   return [...rows].sort((a, b) => a.name.localeCompare(b.name));
 }

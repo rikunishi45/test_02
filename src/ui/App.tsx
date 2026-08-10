@@ -20,7 +20,7 @@ import { EntryScreen } from "./EntryScreen.js";
 import { CalendarScreen } from "./CalendarScreen.js";
 import { TransactionList } from "./TransactionList.js";
 import { SummaryScreen } from "./SummaryScreen.js";
-import { BackupPanel } from "./BackupPanel.js";
+import { DataPanel } from "./DataPanel.js";
 import { CategoryPanel } from "./CategoryPanel.js";
 
 /**
@@ -116,7 +116,7 @@ export function App() {
       active={tab}
       onSelect={(id) => setTab(id as Tab)}
       title={TITLES[tab]}
-      banner={<PersistenceBanner state={persistence} />}
+      banner={<PersistenceBanner state={persistence.state} />}
     >
       {tab === "report" && <SummaryScreen transactions={transactions} />}
       {tab === "list" && (
@@ -157,7 +157,11 @@ export function App() {
             learned={learned}
             onChanged={reload}
           />
-          <BackupPanel db={database.db} onRestored={reload} />
+          <DataPanel
+            db={database.db}
+            persistence={persistence}
+            onRestored={reload}
+          />
         </>
       )}
     </AppShell>
