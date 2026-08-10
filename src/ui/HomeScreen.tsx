@@ -186,7 +186,18 @@ const styles = {
     textAlign: "right",
     whiteSpace: "nowrap",
   },
-  deltaUp: { fontSize: 12, color: "var(--danger)", fontVariantNumeric: "tabular-nums" },
-  deltaDown: { fontSize: 12, color: "var(--income)", fontVariantNumeric: "tabular-nums" },
-  deltaFlat: { fontSize: 12, color: "var(--faint)" },
+  // marginLeft はカードの中で金額に密着させないため。表のセルでは右寄せなので効かない。
+  deltaUp: {
+    fontSize: 12,
+    color: "var(--danger)",
+    fontVariantNumeric: "tabular-nums",
+    marginLeft: 6,
+  },
+  deltaDown: {
+    fontSize: 12,
+    color: "var(--income)",
+    fontVariantNumeric: "tabular-nums",
+    marginLeft: 6,
+  },
+  deltaFlat: { fontSize: 12, color: "var(--faint)", marginLeft: 6 },
 } as const;
