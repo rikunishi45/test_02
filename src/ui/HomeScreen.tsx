@@ -7,10 +7,12 @@ import {
   sumAll,
 } from "../aggregate/period.js";
 import { compareByCategory, expenseDeltaYen } from "../aggregate/compare.js";
+import { colorOf } from "../category/color.js";
 import { toIsoDate } from "../domain/date-parts.js";
 import { sortForList } from "../list/query.js";
 import { detectRecurring, totalMonthlyYen } from "../recurring/detect.js";
-import type { StoredTransaction } from "../storage/schema.js";
+import type { CategoryRecord, StoredTransaction } from "../storage/schema.js";
+import { CategoryDot } from "./CategoryDot.js";
 
 const YEN = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY" });
 
@@ -26,7 +28,13 @@ const SOURCE_LABEL = { card: "カード", bank: "銀行", cash: "現金" } as co
  * 期間を選ばせない。選べる画面は既にレポートとカレンダーにあり、ここで3つ目を
  * 作ると「どこで何を見るか」が決まらなくなる。開いた瞬間に読めることだけを置く。
  */
-export function HomeScreen({ transactions }: { transactions: StoredTransaction[] }) {
+export function HomeScreen({
+  transactions,
+  categories,
+}: {
+  transactions: StoredTransaction[];
+  categories: readonly CategoryRecord[];
+}) {
   const today = toIsoDate(new Date());
   const month = monthOf(today);
 
@@ -70,7 +78,10 @@ export function HomeScreen({ transactions }: { transactions: StoredTransaction[]
           <tbody>
             {comparison.map((row) => (
               <tr key={row.category}>
-                <td style={styles.td}>{row.category}</td>
+                <td style={styles.td}>
+                  <CategoryDot color={colorOf(categories, row.category)} />
+                  {row.category}
+                </td>
                 <td style={styles.amount}>{YEN.format(negateExpense(row.expenseYen))}</td>
                 <td style={styles.deltaCell}>
                   <Delta yen={row.deltaYen} />
