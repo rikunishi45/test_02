@@ -50,3 +50,24 @@ export function compareByCategory(
 function toMap(transactions: readonly StoredTransaction[]): Map<string, number> {
   return new Map(sumByCategory(transactions).map((total) => [total.category, total.expenseYen]));
 }
+
+/**
+ * 期間全体の支出の増減。増えたら正、減ったら負。
+ *
+ * カテゴリ単位の同じ計算は `compareByCategory` が持っている。合計だけ画面で
+ * 引くと、**符号がひっくり返っても壁が反応しない**（`src/ui/` はカバレッジも
+ * ミューテーションテストも掛からない）。増減の符号は数字を知らないと画面を
+ * 見ても気づけない側なので、ここに置く。
+ *
+ * 収入は見ない。増減として読みたいのは支出で、収入の増減は別の意味を持つ。
+ */
+export function expenseDeltaYen(
+  current: readonly StoredTransaction[],
+  previous: readonly StoredTransaction[],
+): number {
+  return totalExpense(current) - totalExpense(previous);
+}
+
+function totalExpense(transactions: readonly StoredTransaction[]): number {
+  return sumByCategory(transactions).reduce((sum, total) => sum + total.expenseYen, 0);
+}

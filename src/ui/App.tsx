@@ -19,6 +19,7 @@ import { ImportScreen } from "./ImportScreen.js";
 import { EntryScreen } from "./EntryScreen.js";
 import { CalendarScreen } from "./CalendarScreen.js";
 import { TransactionList } from "./TransactionList.js";
+import { HomeScreen } from "./HomeScreen.js";
 import { SummaryScreen } from "./SummaryScreen.js";
 import { DataPanel } from "./DataPanel.js";
 import { CategoryPanel } from "./CategoryPanel.js";
@@ -27,9 +28,10 @@ import { CategoryPanel } from "./CategoryPanel.js";
  * 画面。ホームはまだ無い（段階6で足す）。
  * 順番はサイドバーの並びと同じ。
  */
-type Tab = "report" | "list" | "cash" | "calendar" | "import" | "settings";
+type Tab = "home" | "report" | "list" | "cash" | "calendar" | "import" | "settings";
 
 const TITLES: Record<Tab, string> = {
+  home: "ホーム",
   report: "レポート",
   list: "取引一覧",
   cash: "取引を入力",
@@ -41,7 +43,7 @@ const TITLES: Record<Tab, string> = {
 export function App() {
   const database = useDatabase();
   const persistence = usePersistence();
-  const [tab, setTab] = useState<Tab>("report");
+  const [tab, setTab] = useState<Tab>("home");
   const [transactions, setTransactions] = useState<StoredTransaction[]>([]);
   const [learned, setLearned] = useState<LearnedCategories>({});
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
@@ -102,6 +104,7 @@ export function App() {
   const categoryOptions = categoryNames(categories);
 
   const items: NavItem[] = [
+    { id: "home", label: "ホーム" },
     { id: "report", label: "レポート" },
     { id: "list", label: "取引一覧", count: transactions.length },
     { id: "cash", label: "取引を入力" },
@@ -118,6 +121,7 @@ export function App() {
       title={TITLES[tab]}
       banner={<PersistenceBanner state={persistence.state} />}
     >
+      {tab === "home" && <HomeScreen transactions={transactions} />}
       {tab === "report" && <SummaryScreen transactions={transactions} />}
       {tab === "list" && (
         <TransactionList

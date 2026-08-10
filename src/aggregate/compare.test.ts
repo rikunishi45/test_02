@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { INCOME, UNCATEGORIZED } from "../category/classify.js";
 import type { StoredTransaction } from "../storage/schema.js";
-import { compareByCategory, type CategoryComparison } from "./compare.js";
+import { compareByCategory, expenseDeltaYen, type CategoryComparison } from "./compare.js";
 
 const BASE: StoredTransaction = {
   id: "t-000",
@@ -290,5 +290,85 @@ describe("並び順は自前の比較で決まる", () => {
       const after = rows[i]!;
       expect(before.expenseYen).toBeGreaterThanOrEqual(after.expenseYen);
     }
+  });
+});
+
+describe("expenseDeltaYen", () => {
+  it("増えたら正", () => {
+    expect(expenseDeltaYen(spend({ 食費: 5000 }), spend({ 食費: 3000 }))).toBe(2000);
+  });
+
+  it("減ったら負", () => {
+    expect(expenseDeltaYen(spend({ 食費: 3000 }), spend({ 食費: 5000 }))).toBe(-2000);
+  });
+
+  it("同額なら 0", () => {
+    expect(expenseDeltaYen(spend({ 食費: 3000 }), spend({ 食費: 3000 }))).toBe(0);
+  });
+
+  it("同額のときの 0 は +0", () => {
+    const delta = expenseDeltaYen(spend({ 食費: 3000 }), spend({ 食費: 3000 }));
+
+    expect(delta).toBe(0);
+    expect(1 / delta).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("両方空なら +0", () => {
+    const delta = expenseDeltaYen([], []);
+
+    expect(delta).toBe(0);
+    expect(1 / delta).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("前期が空なら今期の全額が増加になる", () => {
+    expect(expenseDeltaYen(spend({ 食費: 5000, 医療: 100 }), [])).toBe(5100);
+  });
+
+  it("今期が空なら前期の全額が減少になる", () => {
+    expect(expenseDeltaYen([], spend({ 食費: 5000 }))).toBe(-5000);
+  });
+
+  it("カテゴリをまたいで合計する", () => {
+    expect(expenseDeltaYen(spend({ a: 100, b: 200, c: 300 }), spend({ a: 600 }))).toBe(0);
+  });
+
+  it("カテゴリの入れ替わりがあっても合計だけを見る", () => {
+    expect(expenseDeltaYen(spend({ 医療: 1000 }), spend({ 食費: 400 }))).toBe(600);
+  });
+
+  it("収入は増減に混ざらない", () => {
+    const current = [tx("食費", -1000), tx(INCOME, 250000)];
+
+    expect(expenseDeltaYen(current, [])).toBe(1000);
+  });
+
+  it("前期の収入も混ざらない", () => {
+    const previous = [tx("食費", -1000), tx(INCOME, 250000)];
+
+    expect(expenseDeltaYen([], previous)).toBe(-1000);
+  });
+
+  it("今期と前期を入れ替えると符号が反転する", () => {
+    const current = spend({ 食費: 5000 });
+    const previous = spend({ 食費: 3000 });
+
+    expect(expenseDeltaYen(previous, current)).toBe(-expenseDeltaYen(current, previous));
+  });
+
+  it("compareByCategory の差の総和と一致する", () => {
+    const current = spend({ 食費: 5000, 医療: 100 });
+    const previous = spend({ 食費: 3000, 娯楽: 700 });
+    const sumOfRows = compareByCategory(current, previous).reduce((s, r) => s + r.deltaYen, 0);
+
+    expect(expenseDeltaYen(current, previous)).toBe(sumOfRows);
+  });
+
+  it("入力を書き換えない", () => {
+    const current = spend({ 食費: 1000 });
+    const snapshot = structuredClone(current);
+
+    expenseDeltaYen(current, []);
+
+    expect(current).toEqual(snapshot);
   });
 });
