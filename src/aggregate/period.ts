@@ -87,6 +87,25 @@ export function sumByDay(transactions: readonly StoredTransaction[]): PeriodTota
   return sumByPeriod(transactions, (transaction) => transaction.date);
 }
 
+/** `"YYYY-MM-DD"` から年（`"YYYY"`）を取り出す */
+export function yearOf(date: string): string {
+  return date.slice(0, 4);
+}
+
+export function sumByYear(transactions: readonly StoredTransaction[]): PeriodTotal[] {
+  return sumByPeriod(transactions, (transaction) => yearOf(transaction.date));
+}
+
+/**
+ * 年キー（`"YYYY"`）を `step` 年だけ動かす。
+ *
+ * 年は4桁にゼロ詰めする。`shiftMonth` と同じ理由——詰めないと日付順の比較
+ * （文字列の辞書順）が壊れる。
+ */
+export function shiftYear(year: string, step: number): string {
+  return String(Number(year) + step).padStart(4, "0");
+}
+
 /**
  * 期間で割らずに全件を合計する。絞り込みに追従する合計を出すため。
  *
@@ -158,6 +177,27 @@ export function inMonth(
   month: string,
 ): StoredTransaction[] {
   return transactions.filter((transaction) => monthOf(transaction.date) === month);
+}
+
+/**
+ * `from` から `to` までの取引を取り出す。**両端を含む。**
+ *
+ * 日付は `"YYYY-MM-DD"` に正規化済み（`parseDate`）なので、文字列の比較が
+ * そのまま日付の比較になる。`Date` に変換しないのは、変換するとタイムゾーンの
+ * 解釈が入り込むため（`date-parts.ts` と同じ理由）。
+ *
+ * `from` が `to` より後なら空になる。「範囲が逆」を別のエラーにしない——
+ * 入力欄で日付を2つ選ばせる以上その状態は普通に作れて、そのとき欲しいのは
+ * 例外ではなく「該当なし」だから。
+ */
+export function inRange(
+  transactions: readonly StoredTransaction[],
+  from: string,
+  to: string,
+): StoredTransaction[] {
+  return transactions.filter(
+    (transaction) => transaction.date >= from && transaction.date <= to,
+  );
 }
 
 /**

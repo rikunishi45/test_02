@@ -3,6 +3,10 @@ import type { StoredTransaction } from "../storage/schema.js";
 import { UNCATEGORIZED } from "../category/classify.js";
 import {
   monthOf,
+  yearOf,
+  sumByYear,
+  shiftYear,
+  inRange,
   shiftMonth,
   sumByMonth,
   sumByDay,
@@ -1171,5 +1175,251 @@ describe("sumAll", () => {
 
       expect(sumAll(transactions)).toEqual({ expenseYen: 1200, incomeYen: 0 });
     });
+  });
+});
+
+describe("yearOf", () => {
+  it("YYYY-MM-DD から YYYY を取り出す", () => {
+    expect(yearOf("2026-01-15")).toBe("2026");
+  });
+
+  it("元日でもその年を返す", () => {
+    expect(yearOf("2026-01-01")).toBe("2026");
+  });
+
+  it("大晦日でも翌年に繰り上がらない", () => {
+    expect(yearOf("2026-12-31")).toBe("2026");
+  });
+
+  it("同じ年の別の日は同じ値", () => {
+    expect(yearOf("2026-03-01")).toBe(yearOf("2026-11-28"));
+  });
+
+  it("年をまたぐと違う値", () => {
+    expect(yearOf("2025-12-31")).not.toBe(yearOf("2026-01-01"));
+  });
+});
+
+describe("sumByYear", () => {
+  it("空なら空配列", () => {
+    expect(sumByYear([])).toEqual([]);
+  });
+
+  it("同じ年の取引が1つにまとまる", () => {
+    const totals = sumByYear([
+      tx({ date: "2026-01-05", amountYen: -100 }),
+      tx({ date: "2026-12-25", amountYen: -200 }),
+    ]);
+
+    expect(totals).toEqual([{ period: "2026", expenseYen: 300, incomeYen: 0 }]);
+  });
+
+  it("違う年は別のエントリになる", () => {
+    const totals = sumByYear([
+      tx({ date: "2025-12-31", amountYen: -100 }),
+      tx({ date: "2026-01-01", amountYen: -200 }),
+    ]);
+
+    expect(periodsOf(totals)).toEqual(["2025", "2026"]);
+  });
+
+  it("period は4桁の年で、月を含まない", () => {
+    expect(at(sumByYear([tx({ date: "2026-07-09", amountYen: -100 })]), 0).period).toBe("2026");
+  });
+
+  it("年の昇順で返る（入力順に依存しない）", () => {
+    const totals = sumByYear([
+      tx({ date: "2027-01-01", amountYen: -300 }),
+      tx({ date: "2025-01-01", amountYen: -100 }),
+      tx({ date: "2026-01-01", amountYen: -200 }),
+    ]);
+
+    expect(periodsOf(totals)).toEqual(["2025", "2026", "2027"]);
+  });
+
+  it("支出と収入を別々に合計する", () => {
+    const totals = sumByYear([
+      tx({ date: "2026-03-01", amountYen: -1200 }),
+      tx({ date: "2026-08-01", amountYen: 300000 }),
+    ]);
+
+    expect(at(totals, 0)).toEqual({ period: "2026", expenseYen: 1200, incomeYen: 300000 });
+  });
+
+  it("支出だけの年でも incomeYen は +0（-0 にならない）", () => {
+    expectPlusZero(at(sumByYear([tx({ date: "2026-03-01", amountYen: -1200 })]), 0).incomeYen);
+  });
+
+  it("年の合計が、その年の月別合計の総和と一致する", () => {
+    const transactions = [
+      tx({ date: "2026-01-15", amountYen: -1000 }),
+      tx({ date: "2026-06-15", amountYen: -2000 }),
+      tx({ date: "2026-12-15", amountYen: 5000 }),
+    ];
+    const byMonth = sumByMonth(transactions);
+
+    expect(at(sumByYear(transactions), 0)).toEqual({
+      period: "2026",
+      expenseYen: byMonth.reduce((sum, m) => sum + m.expenseYen, 0),
+      incomeYen: byMonth.reduce((sum, m) => sum + m.incomeYen, 0),
+    });
+  });
+
+  it("入力を書き換えない", () => {
+    expectInputUnchanged([tx({ date: "2026-01-15" })], (input) => sumByYear(input));
+  });
+});
+
+describe("inRange", () => {
+  const transactions = [
+    tx({ id: "a", date: "2026-06-30" }),
+    tx({ id: "b", date: "2026-07-01" }),
+    tx({ id: "c", date: "2026-07-15" }),
+    tx({ id: "d", date: "2026-07-31" }),
+    tx({ id: "e", date: "2026-08-01" }),
+  ];
+
+  function idsIn(from: string, to: string): string[] {
+    return inRange(transactions, from, to).map((t) => t.id);
+  }
+
+  describe("両端を含む", () => {
+    it("開始日の取引を含む", () => {
+      expect(idsIn("2026-07-01", "2026-07-31")).toContain("b");
+    });
+
+    it("終了日の取引を含む", () => {
+      expect(idsIn("2026-07-01", "2026-07-31")).toContain("d");
+    });
+
+    it("範囲の外は含まない", () => {
+      const ids = idsIn("2026-07-01", "2026-07-31");
+      expect(ids).not.toContain("a");
+      expect(ids).not.toContain("e");
+    });
+
+    it("範囲内だけが順序を保って返る", () => {
+      expect(idsIn("2026-07-01", "2026-07-31")).toEqual(["b", "c", "d"]);
+    });
+  });
+
+  describe("境界のすぐ外", () => {
+    it("開始日の前日は含まれない", () => {
+      expect(idsIn("2026-07-01", "2026-12-31")).not.toContain("a");
+    });
+
+    it("終了日の翌日は含まれない", () => {
+      expect(idsIn("2026-01-01", "2026-07-31")).not.toContain("e");
+    });
+
+    it("1日だけの範囲はその日だけ返る", () => {
+      expect(idsIn("2026-07-15", "2026-07-15")).toEqual(["c"]);
+    });
+
+    it("該当が無い1日の範囲は空", () => {
+      expect(idsIn("2026-07-16", "2026-07-16")).toEqual([]);
+    });
+  });
+
+  describe("端のケース", () => {
+    it("空の配列は空を返す", () => {
+      expect(inRange([], "2026-01-01", "2026-12-31")).toEqual([]);
+    });
+
+    it("すべてを含む範囲なら全件返る", () => {
+      expect(idsIn("2000-01-01", "2099-12-31")).toEqual(["a", "b", "c", "d", "e"]);
+    });
+
+    // 入力欄で日付を2つ選ばせる以上、逆転した状態は普通に作れる。
+    // 例外ではなく「該当なし」を返す。
+    it("from が to より後なら空（例外を投げない）", () => {
+      expect(idsIn("2026-08-01", "2026-07-01")).toEqual([]);
+    });
+
+    it("年をまたぐ範囲も引ける", () => {
+      const across = [tx({ id: "x", date: "2025-12-31" }), tx({ id: "y", date: "2026-01-01" })];
+
+      expect(inRange(across, "2025-12-01", "2026-01-31").map((t) => t.id)).toEqual(["x", "y"]);
+    });
+  });
+
+  describe("入力を書き換えない", () => {
+    it("入力の配列そのものは返さない", () => {
+      expect(inRange(transactions, "2000-01-01", "2099-12-31")).not.toBe(transactions);
+    });
+
+    it("呼び出しの前後で内容が変わらない", () => {
+      expectInputUnchanged([...transactions], (input) =>
+        inRange(input, "2026-07-01", "2026-07-31"),
+      );
+    });
+  });
+
+  it("月の範囲を指定すると inMonth と同じ結果になる", () => {
+    expect(inRange(transactions, "2026-07-01", "2026-07-31")).toEqual(
+      inMonth(transactions, "2026-07"),
+    );
+  });
+});
+
+describe("shiftYear", () => {
+  it("翌年を返す", () => {
+    expect(shiftYear("2026", 1)).toBe("2027");
+  });
+
+  it("前年を返す", () => {
+    expect(shiftYear("2026", -1)).toBe("2025");
+  });
+
+  it("0 なら同じ年", () => {
+    expect(shiftYear("2026", 0)).toBe("2026");
+  });
+
+  it("世紀をまたぐ", () => {
+    expect(shiftYear("2099", 1)).toBe("2100");
+    expect(shiftYear("2100", -1)).toBe("2099");
+  });
+
+  it("何年でも動かせる", () => {
+    expect(shiftYear("2026", 10)).toBe("2036");
+    expect(shiftYear("2026", -10)).toBe("2016");
+  });
+
+  it("進めてから戻すと元に戻る", () => {
+    expect(shiftYear(shiftYear("2026", 3), -3)).toBe("2026");
+  });
+
+  describe("ゼロ埋め", () => {
+    it("4桁に詰める（0099 の翌年は 0100）", () => {
+      expect(shiftYear("0099", 1)).toBe("0100");
+    });
+
+    it("100未満の年も4桁のまま", () => {
+      expect(shiftYear("0005", -1)).toBe("0004");
+    });
+
+    it("3桁になる引き算も4桁で返る", () => {
+      expect(shiftYear("0100", -1)).toBe("0099");
+    });
+
+    it("結果は常に4桁", () => {
+      for (const step of [-50, -1, 0, 1, 50]) {
+        expect(shiftYear("0100", step)).toMatch(/^\d{4}$/);
+      }
+    });
+  });
+
+  describe("順序が保たれる", () => {
+    it("進めた年は辞書順で後ろ", () => {
+      expect(shiftYear("0099", 1) > "0099").toBe(true);
+    });
+
+    it("戻した年は辞書順で前", () => {
+      expect(shiftYear("0100", -1) < "0100").toBe(true);
+    });
+  });
+
+  it("12か月動かした shiftMonth の年と一致する", () => {
+    expect(shiftMonth("2026-07", 12).slice(0, 4)).toBe(shiftYear("2026", 1));
   });
 });
