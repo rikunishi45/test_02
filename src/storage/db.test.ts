@@ -15,6 +15,7 @@ import {
   deleteTransaction,
   saveCategoryChange,
   clearAllData,
+  setBudget,
 } from "./db.js";
 import { budgetId, type CategoryRecord, type StoredTransaction, type ImportRecord, type NamedColumnMapping } from "./schema.js";
 import type { CategoryChange } from "../category/manage.js";
@@ -2369,7 +2370,15 @@ describe("saveCategoryChange", () => {
   ];
 
   function changeOf(overrides: Partial<CategoryChange> = {}): CategoryChange {
-    return { categories: CATEGORIES, transactions: [], learned: [], forget: [], ...overrides };
+    return {
+      categories: CATEGORIES,
+      transactions: [],
+      learned: [],
+      forget: [],
+      budgets: [],
+      removedBudgetIds: [],
+      ...overrides,
+    };
   }
 
   describe("マスタ", () => {
@@ -2488,6 +2497,8 @@ describe("saveCategoryChange", () => {
         transactions: [transactionOf({ id: "a", category: "外食" })],
         learned: [{ description: "セブン", category: "外食" }],
         forget: [],
+        budgets: [],
+        removedBudgetIds: [],
       });
 
       expect((await getAllTransactions(db))[0]?.category).toBe("外食");
@@ -2501,7 +2512,14 @@ describe("saveCategoryChange", () => {
       const db = await freshDatabase();
       const before = await getAllCategories(db);
 
-      const broken = { categories: CATEGORIES, transactions: [{} as StoredTransaction], learned: [], forget: [] };
+      const broken = {
+        categories: CATEGORIES,
+        transactions: [{} as StoredTransaction],
+        learned: [],
+        forget: [],
+        budgets: [],
+        removedBudgetIds: [],
+      };
       await expect(saveCategoryChange(db, broken)).rejects.toBeTruthy();
 
       expect(byName2(await getAllCategories(db))).toEqual(byName2(before));
@@ -2516,6 +2534,8 @@ describe("saveCategoryChange", () => {
         transactions: [transactionOf({ id: "a", category: "外食" }), {} as StoredTransaction],
         learned: [],
         forget: [],
+        budgets: [],
+        removedBudgetIds: [],
       };
       await expect(saveCategoryChange(db, broken)).rejects.toBeTruthy();
 
@@ -2705,3 +2725,116 @@ describe("clearAllData", () => {
 function byId2(rows: readonly CategoryRecord[]): CategoryRecord[] {
   return [...rows].sort((a, b) => a.name.localeCompare(b.name));
 }
+
+describe("setBudget", () => {
+  async function budgetsOf(db: IDBDatabase): Promise<[string, number][]> {
+    return (await getAllBudgets(db))
+      .map((b): [string, number] => [b.id, b.amountYen])
+      .sort((a, b) => a[0].localeCompare(b[0]));
+  }
+
+  describe("書き込み", () => {
+    it("1件保存される", async () => {
+      const db = await freshDatabase();
+
+      await setBudget(db, "2026-07", "食費", 50000);
+
+      expect(await getAllBudgets(db)).toEqual([
+        { id: budgetId("2026-07", "食費"), month: "2026-07", category: "食費", amountYen: 50000 },
+      ]);
+    });
+
+    it("同じ月・同じカテゴリは上書きされる（2件にならない）", async () => {
+      const db = await freshDatabase();
+
+      await setBudget(db, "2026-07", "食費", 50000);
+      await setBudget(db, "2026-07", "食費", 30000);
+
+      expect(await budgetsOf(db)).toEqual([[budgetId("2026-07", "食費"), 30000]]);
+    });
+
+    it("月が違えば別のレコードになる", async () => {
+      const db = await freshDatabase();
+
+      await setBudget(db, "2026-07", "食費", 50000);
+      await setBudget(db, "2026-08", "食費", 40000);
+
+      expect(await budgetsOf(db)).toHaveLength(2);
+    });
+
+    it("カテゴリが違えば別のレコードになる", async () => {
+      const db = await freshDatabase();
+
+      await setBudget(db, "2026-07", "食費", 50000);
+      await setBudget(db, "2026-07", "医療", 10000);
+
+      expect(await budgetsOf(db)).toHaveLength(2);
+    });
+
+    it("1円でも保存される（境界）", async () => {
+      const db = await freshDatabase();
+
+      await setBudget(db, "2026-07", "食費", 1);
+
+      expect(await budgetsOf(db)).toEqual([[budgetId("2026-07", "食費"), 1]]);
+    });
+  });
+
+  describe("0 以下は消す", () => {
+    it("0 を渡すと消える", async () => {
+      const db = await freshDatabase();
+      await setBudget(db, "2026-07", "食費", 50000);
+
+      await setBudget(db, "2026-07", "食費", 0);
+
+      expect(await getAllBudgets(db)).toEqual([]);
+    });
+
+    it("負の額でも消える", async () => {
+      const db = await freshDatabase();
+      await setBudget(db, "2026-07", "食費", 50000);
+
+      await setBudget(db, "2026-07", "食費", -100);
+
+      expect(await getAllBudgets(db)).toEqual([]);
+    });
+
+    it("0 で消しても、他の予算は残る", async () => {
+      const db = await freshDatabase();
+      await setBudget(db, "2026-07", "食費", 50000);
+      await setBudget(db, "2026-07", "医療", 10000);
+
+      await setBudget(db, "2026-07", "食費", 0);
+
+      expect(await budgetsOf(db)).toEqual([[budgetId("2026-07", "医療"), 10000]]);
+    });
+
+    it("存在しない予算に 0 を渡しても失敗しない", async () => {
+      const db = await freshDatabase();
+
+      await expect(setBudget(db, "2026-07", "食費", 0)).resolves.toBeUndefined();
+    });
+
+    it("消したあと、同じ月・カテゴリで入れ直せる", async () => {
+      const db = await freshDatabase();
+      await setBudget(db, "2026-07", "食費", 50000);
+      await setBudget(db, "2026-07", "食費", 0);
+
+      await setBudget(db, "2026-07", "食費", 20000);
+
+      expect(await budgetsOf(db)).toEqual([[budgetId("2026-07", "食費"), 20000]]);
+    });
+  });
+
+  it("他のストアには触らない", async () => {
+    const db = await freshDatabase();
+    await seed(db, { transactions: [transactionOf({ id: "a" })] });
+    const before = await getAllTransactions(db);
+    const categoriesBefore = await getAllCategories(db);
+
+    await setBudget(db, "2026-07", "食費", 50000);
+
+    expect(await getAllTransactions(db)).toEqual(before);
+    expect(await getAllCategories(db)).toEqual(categoriesBefore);
+  });
+});
