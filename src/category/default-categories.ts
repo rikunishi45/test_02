@@ -23,6 +23,8 @@ export const CATEGORY_PALETTE = [
   "#f08ab0",
   "#2f9fa8",
   "#e0813c",
+  "#8fbf3f",
+  "#5f6fd9",
 ] as const;
 
 /** 収入は支出のパレットから外す。内訳の円グラフに現れないので、色をぶつけても意味が無い */
@@ -76,4 +78,68 @@ export function defaultCategories(rules: readonly CategoryRule[]): CategoryRecor
     { name: INCOME, color: INCOME_COLOR, order: spending.length },
     { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: spending.length + 1 },
   ];
+}
+
+/** 収入・未分類。初期値では支出カテゴリの後ろに置く */
+function isFixed(name: string): boolean {
+  return name === INCOME || name === UNCATEGORIZED;
+}
+
+/**
+ * 既存のマスタに、まだ無いカテゴリを足したマスタ全体を返す。
+ * **足すものが無ければ空配列**——呼び出し側が「書くものが無い」を分岐せずに済む。
+ *
+ * 初期値（`defaultCategories`）はストアを作るときにしか入らない。後から
+ * `DEFAULT_CATEGORY_RULES` にカテゴリを足しても、既に使っているデータベースの
+ * マスタには現れず、ルールが返した名前は**マスタに無い**ので
+ * `reclassifyTransactions` が未分類に落とす。その差を埋めるための関数。
+ *
+ * **呼ぶのはスキーマのバージョンを上げたときだけ**（`db.ts`）。起動のたびに
+ * 呼ぶと、ユーザーが消したカテゴリが次の起動で復活する。
+ *
+ * 色は**まだ使われていないパレットの色**から選ぶ。既定の色をそのまま使うと、
+ * ユーザーが色を変えていない限り必ず既存のカテゴリと衝突する。
+ *
+ * 新しいカテゴリは**最後の支出カテゴリの直後**に入れる。既存レコードの相対順は
+ * 変えない——`moveCategory` は収入・未分類の移動を禁じていないので、
+ * 「支出 → 収入 → 未分類」の並びは保証が無い。並べ直す形にすると、収入を上へ
+ * 動かしていた人の設定を移行が黙って戻す。`order` は 0 から振り直すが、
+ * 見えている順序は変わらない（`moveCategory` と同じ方針——飛び番を残さない）。
+ */
+export function withAddedCategories(
+  existing: readonly CategoryRecord[],
+  names: readonly string[],
+): CategoryRecord[] {
+  const known = new Set(existing.map((record) => record.name));
+  const added = [...new Set(names)].filter((name) => !known.has(name));
+  if (added.length === 0) {
+    return [];
+  }
+
+  const used = new Set(existing.map((record) => record.color));
+  const fresh = added.map((name, index) => {
+    const color =
+      CATEGORY_PALETTE.find((candidate) => !used.has(candidate)) ??
+      CATEGORY_PALETTE[index % CATEGORY_PALETTE.length]!;
+    used.add(color);
+    return { name, color, order: 0 };
+  });
+
+  const ordered = [...existing].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+
+  // 最後の支出カテゴリの直後。支出カテゴリが1つも無ければ先頭に置く
+  // （末尾に置くと、収入・未分類しか無いマスタで新しい支出が最後に付く）。
+  // `findLastIndex` は lib が ES2022 なので使わない（`tsconfig.json` は保護パス）。
+  let lastSpending = -1;
+  ordered.forEach((record, index) => {
+    if (!isFixed(record.name)) {
+      lastSpending = index;
+    }
+  });
+
+  return [
+    ...ordered.slice(0, lastSpending + 1),
+    ...fresh,
+    ...ordered.slice(lastSpending + 1),
+  ].map((record, index) => ({ ...record, order: index }));
 }

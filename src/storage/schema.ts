@@ -9,8 +9,18 @@ export const DB_NAME = "kakeibo";
  * IndexedDB のレコードはスキーマレスなので、既存レコードへのフィールド追加
  * （`memo`）だけならバージョンを上げる必要は無い。ただ今回は上げる機会なので、
  * 既存行の `memo` の埋め戻しもこの versionchange に相乗りさせている（`db.ts`）。
+ *
+ * 4 は**初期カテゴリを増やしたから**（住居 / 美容）。カテゴリの初期値はストアを
+ * 作るときにしか入らないので、既に使っているデータベースには versionchange で
+ * 足すしかない。**足す経路をバージョンに紐づけるのが要**——起動のたびに足すと、
+ * ユーザーが消したカテゴリが次の起動で復活する（`db.ts`）。
+ *
+ * **3 を飛ばしている。** 開発中、この定数を 3 に上げた状態で画面が読み込まれ、
+ * 移行の中身を書く前に versionchange を使い切ったブラウザができた。そこは
+ * もう v3 なので、移行を 3 に紐づけると**そのデータベースだけ永久に足されない。**
+ * 4 にすれば、新規・v1・v2・中身の無い v3 のどれもが同じ状態に収束する。
  */
-export const DB_VERSION = 2;
+export const DB_VERSION = 4;
 
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_IMPORTS = "imports";

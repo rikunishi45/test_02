@@ -41,6 +41,32 @@ export const MAX_AMOUNT_DIGITS = 9;
  * **上限を超える押下は、部分的に入れずに丸ごと捨てる。** `"00"` が1桁だけ入る
  * 状況で1桁だけ足すと、押したキーと入った桁数が食い違う。
  */
+/**
+ * キーボードから打ち込まれた文字列を、金額の桁に直す。
+ *
+ * テンキーの `pressKey` と**同じ不変条件を保つ**（先頭ゼロを作らない、上限を
+ * 超えたら丸ごと捨てる）。入力の経路が2つになっても、画面が持つ金額の形は
+ * 1種類でなければならない——`buildManualTransaction` はその形だけを受ける。
+ *
+ * `raw` は入力欄の値そのものなので、外から何でも来る（貼り付け・IME・
+ * 桁区切りのカンマ）。**NFKC で畳んでから数字以外を落とす。** 全角数字は実際に
+ * 入る（IME を切り忘れたまま打つ）ので、弾くのではなく畳んで受ける
+ * （`normalizeDescription` と同じ理由で自前の文字表は持たない）。
+ *
+ * **先頭ゼロを落としてから桁数を見る。** 先に見ると `0000000000123` のような
+ * 貼り付けが「上限超過」で丸ごと捨てられる。意味のある桁は3桁しかない。
+ *
+ * 上限を超えた入力は `current` を返して**何も変えない**。切り詰めると、
+ * 貼り付けた額と画面の額が黙って食い違う。
+ */
+export function typeAmount(current: string, raw: string): string {
+  const digits = raw.normalize("NFKC").replace(/\D/gu, "").replace(/^0+/u, "");
+  if (digits.length > MAX_AMOUNT_DIGITS) {
+    return current;
+  }
+  return digits;
+}
+
 export function pressKey(current: string, key: KeypadKey): string {
   if (key === "clear") {
     return "";

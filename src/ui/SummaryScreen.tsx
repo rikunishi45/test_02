@@ -13,8 +13,16 @@ import {
   yearOf,
   type PeriodTotal,
 } from "../aggregate/period.js";
+import {
+  buildSeries,
+  categorySeries,
+  EXPENSE_SERIES,
+  INCOME_SERIES,
+} from "../aggregate/series.js";
 import { compareByCategory, type CategoryComparison } from "../aggregate/compare.js";
 import { colorOf } from "../category/color.js";
+import { categoryNames } from "../category/default-categories.js";
+import { expenseCategories } from "../category/manage.js";
 import { layoutBars, maxOf, niceScale, yOf } from "../chart/bar-chart.js";
 import { clampNumber } from "../clamp-number.js";
 import { toIsoDate } from "../domain/date-parts.js";
@@ -47,6 +55,7 @@ const MODES: readonly (readonly [Mode, string])[] = [
   ["range", "期間"],
 ];
 
+
 export function SummaryScreen({
   transactions,
   categories: master,
@@ -58,6 +67,7 @@ export function SummaryScreen({
   const years = sumByYear(transactions);
   const [mode, setMode] = useState<Mode>("month");
   const [selected, setSelected] = useState<string | null>(null);
+  const [series, setSeries] = useState(EXPENSE_SERIES);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
@@ -91,6 +101,10 @@ export function SummaryScreen({
       : mode === "year"
         ? transactions.filter((t) => yearOf(t.date) === shiftYear(period, -1))
         : null;
+
+  // グラフの系列は壁の中で組む。どのカテゴリを・支出と収入のどちらを見るかは、
+  // 取り違えても金額として自然に見えてしまう（`series.ts`）。
+  const chart = buildSeries(transactions, periods, series, mode === "year" ? "year" : "month");
 
   const categories = sumByCategory(current);
   const comparison = previous === null ? null : compareByCategory(current, previous);
@@ -136,8 +150,54 @@ export function SummaryScreen({
 
       {mode !== "range" && (
         <>
-          <h2 style={styles.h2}>{mode === "year" ? "年ごとの支出" : "月ごとの支出"}</h2>
-          <MonthlyBars months={periods} selected={period} onSelect={setSelected} mode={mode} />
+          <h2 style={styles.h2}>
+            {mode === "year" ? "年ごとの" : "月ごとの"}
+            {chart.label}
+            <select
+              aria-label="グラフに出す内容"
+              style={styles.seriesPicker}
+              value={series}
+              onChange={(e) => setSeries(e.target.value)}
+            >
+              <option value={EXPENSE_SERIES}>支出（合計）</option>
+              <option value={INCOME_SERIES}>収入</option>
+              <optgroup label="カテゴリ">
+                {expenseCategories(categoryNames(master)).map((name) => (
+                  <option key={name} value={categorySeries(name)}>
+                    {name}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          </h2>
+          <MonthlyBars
+            totals={periods}
+            values={chart.values}
+            income={chart.income}
+            label={chart.label}
+            selected={period}
+            onSelect={setSelected}
+            mode={mode}
+          />
+
+          {/*
+            表を切り替える期間のボタン。棒グラフをクリックしても切り替わるが、
+            系列をカテゴリに変えると「見ているグラフ」と「下の表の期間」が
+            別のものになる。表の切り替えは表の側に置く。
+          */}
+          <div style={styles.periodButtons}>
+            {periods.map((total) => (
+              <button
+                key={total.period}
+                type="button"
+                aria-pressed={total.period === period}
+                style={total.period === period ? styles.periodOn : styles.periodOff}
+                onClick={() => setSelected(total.period)}
+              >
+                {total.period}
+              </button>
+            ))}
+          </div>
         </>
       )}
 
@@ -248,23 +308,37 @@ function ComparisonTable({
   );
 }
 
-/** 増えたら赤、減ったら緑、同じならグレー。支出なので「増えた」が悪い側 */
+/**
+ * 先月比を**元帳の符号**で出す。支出が増えた＝手元の金は減った＝マイナス。
+ *
+ * 増加を `+` で出していたが、同じ行の支出欄が `-￥12,345`（`negateExpense`）
+ * なので、1行の中で符号の意味が2つあった。画面全体の約束は
+ * 「マイナスは赤・プラスは緑」の1つだけにする。
+ */
+function signedDelta(deltaYen: number): number {
+  return negateExpense(deltaYen);
+}
+
+/** マイナスは赤、プラスは緑、増減なしはグレー */
 function deltaStyle(deltaYen: number) {
-  if (deltaYen > 0) {
+  const signed = signedDelta(deltaYen);
+  if (signed < 0) {
     return { color: "var(--danger)" };
   }
-  if (deltaYen < 0) {
+  if (signed > 0) {
     return { color: "var(--income)" };
   }
   return { color: "var(--faint)" };
 }
 
 function formatDelta(deltaYen: number): string {
-  if (deltaYen === 0) {
+  const signed = signedDelta(deltaYen);
+  if (signed === 0) {
     return "±0";
   }
-  // 支出は増えたときに符号を + で出す。金額そのものは絶対値で読ませる。
-  return `${deltaYen > 0 ? "+" : "−"}${YEN.format(Math.abs(deltaYen))}`;
+  // 記号は自分で置く。`Intl` の負号（U+2212）と揃えるため、正のときも同じ幅の
+  // 記号を使い、金額そのものは絶対値で読ませる。
+  return `${signed > 0 ? "+" : "−"}${YEN.format(Math.abs(signed))}`;
 }
 
 /**
@@ -330,19 +404,32 @@ const POP_WIDTH = 132;
 const POP_HEIGHT = 42;
 const POP_GAP = 8;
 
+/**
+ * 期間ごとの推移。**棒の値は外から渡す**（`values`）。
+ *
+ * 支出・収入・カテゴリのどれを出すかで変わるのは値と色だけなので、系列の
+ * 組み立て（絞り込みと期間の整列）は呼び出し側に置いて、ここは描くことに徹する。
+ * `totals` は期間キーと、吹き出しに添える収入のために受け取る。
+ */
 function MonthlyBars({
-  months,
+  totals,
+  values,
+  income,
+  label,
   selected,
   onSelect,
   mode,
 }: {
-  months: PeriodTotal[];
+  totals: readonly PeriodTotal[];
+  values: readonly number[];
+  /** 収入の系列。金額を正のまま緑で出す */
+  income: boolean;
+  label: string;
   selected: string;
   onSelect: (month: string) => void;
   mode: "month" | "year";
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
-  const values = months.map((m) => m.expenseYen);
   const { max, ticks } = niceScale(maxOf(values), TICK_DIVISIONS);
   const bars = layoutBars(values, {
     width: CHART_WIDTH,
@@ -356,7 +443,7 @@ function MonthlyBars({
       viewBox={`0 0 ${AXIS_WIDTH + CHART_WIDTH} ${TOP_PAD + CHART_HEIGHT + LABEL_HEIGHT}`}
       style={styles.svg}
       role="img"
-      aria-label={mode === "year" ? "年ごとの支出" : "月ごとの支出"}
+      aria-label={`${mode === "year" ? "年" : "月"}ごとの${label}`}
     >
       <g transform={`translate(0 ${TOP_PAD})`}>
         {ticks.map((tick) => (
@@ -380,7 +467,7 @@ function MonthlyBars({
         ))}
 
         {bars.map((bar, index) => {
-          const period = months[index]!.period;
+          const period = totals[index]!.period;
           return (
             <g
               key={period}
@@ -421,7 +508,12 @@ function MonthlyBars({
         })}
 
         {hovered !== null && bars[hovered] !== undefined && (
-          <HoverPop total={months[hovered]!} bar={bars[hovered]!} />
+          <HoverPop
+            period={totals[hovered]!.period}
+            value={values[hovered]!}
+            income={income}
+            bar={bars[hovered]!}
+          />
         )}
       </g>
     </svg>
@@ -439,10 +531,14 @@ function MonthlyBars({
  * 出たり消えたりを繰り返す。
  */
 function HoverPop({
-  total,
+  period,
+  value,
+  income,
   bar,
 }: {
-  total: PeriodTotal;
+  period: string;
+  value: number;
+  income: boolean;
   bar: { x: number; y: number; width: number; height: number };
 }) {
   const center = AXIS_WIDTH + bar.x + bar.width / 2;
@@ -457,16 +553,12 @@ function HoverPop({
     <g style={styles.pop}>
       <rect x={x} y={y} width={POP_WIDTH} height={POP_HEIGHT} rx={6} style={styles.popBox} />
       <text x={x + 10} y={y + 17} style={styles.popPeriod}>
-        {total.period}
+        {period}
       </text>
-      <text x={x + 10} y={y + 33} style={styles.popExpense}>
-        {YEN.format(negateExpense(total.expenseYen))}
+      {/* 収入はそのまま、支出は元帳の符号に直して出す（表の金額と同じ向き） */}
+      <text x={x + 10} y={y + 33} style={income ? styles.popIncomeValue : styles.popExpense}>
+        {YEN.format(income ? value : negateExpense(value))}
       </text>
-      {total.incomeYen > 0 && (
-        <text x={x + POP_WIDTH - 10} y={y + 33} textAnchor="end" style={styles.popIncome}>
-          +{YEN_SHORT.format(total.incomeYen)}
-        </text>
-      )}
     </g>
   );
 }
@@ -485,7 +577,24 @@ const styles = {
   popBox: { fill: "var(--surface-2)", stroke: "var(--line)" },
   popPeriod: { fontSize: 11, fill: "currentColor", opacity: 0.7 },
   popExpense: { fontSize: 13, fill: "var(--danger)", fontVariantNumeric: "tabular-nums" },
-  popIncome: { fontSize: 11, fill: "var(--income)", fontVariantNumeric: "tabular-nums" },
+  popIncomeValue: { fontSize: 13, fill: "var(--income)", fontVariantNumeric: "tabular-nums" },
+  seriesPicker: { fontSize: 13, padding: "2px 6px", marginLeft: "auto" },
+  periodButtons: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 10 },
+  periodOn: {
+    padding: "2px 10px",
+    fontSize: 12,
+    background: "var(--accent)",
+    color: "var(--accent-fg)",
+    borderColor: "var(--accent)",
+    fontWeight: 650,
+    fontVariantNumeric: "tabular-nums",
+  },
+  periodOff: {
+    padding: "2px 10px",
+    fontSize: 12,
+    color: "var(--muted)",
+    fontVariantNumeric: "tabular-nums",
+  },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
   td: { borderBottom: "1px solid var(--line)", padding: "6px 8px" },
   th: {

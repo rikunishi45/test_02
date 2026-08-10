@@ -16,6 +16,7 @@ import {
   inCategory,
   negateExpense,
   netYen,
+  valuesFor,
   type PeriodTotal,
   type CategoryTotal,
 } from "./period.js";
@@ -1477,5 +1478,132 @@ describe("netYen", () => {
 
   it("空の集計は +0", () => {
     expectPlusZero(netYen(sumAll([])));
+  });
+});
+
+describe("valuesFor", () => {
+  function total(period: string, expenseYen: number, incomeYen = 0): PeriodTotal {
+    return { period, expenseYen, incomeYen };
+  }
+
+  describe("期間キーの並びに合わせる", () => {
+    it("渡した期間の順に値を返す", () => {
+      const totals = [total("2026-05", 100), total("2026-06", 200), total("2026-07", 300)];
+
+      expect(valuesFor(["2026-05", "2026-06", "2026-07"], totals, "expenseYen")).toEqual([
+        100, 200, 300,
+      ]);
+    });
+
+    it("集計の並びではなく、渡した期間の並びに従う", () => {
+      const totals = [total("2026-07", 300), total("2026-05", 100)];
+
+      expect(valuesFor(["2026-05", "2026-07"], totals, "expenseYen")).toEqual([100, 300]);
+    });
+
+    it("期間の数だけ値を返す", () => {
+      const periods = ["2026-05", "2026-06", "2026-07", "2026-08"];
+
+      expect(valuesFor(periods, [total("2026-06", 200)], "expenseYen")).toHaveLength(4);
+    });
+  });
+
+  describe("集計に無い期間", () => {
+    it("0 を置く（詰めない）", () => {
+      const totals = [total("2026-05", 100), total("2026-07", 300)];
+
+      expect(valuesFor(["2026-05", "2026-06", "2026-07"], totals, "expenseYen")).toEqual([
+        100, 0, 300,
+      ]);
+    });
+
+    it("先頭が欠けていても 0 で始まる", () => {
+      expect(valuesFor(["2026-05", "2026-06"], [total("2026-06", 200)], "expenseYen")).toEqual([
+        0, 200,
+      ]);
+    });
+
+    it("末尾が欠けていても 0 で終わる", () => {
+      expect(valuesFor(["2026-05", "2026-06"], [total("2026-05", 100)], "expenseYen")).toEqual([
+        100, 0,
+      ]);
+    });
+
+    it("集計が空なら全部 0", () => {
+      expect(valuesFor(["2026-05", "2026-06"], [], "expenseYen")).toEqual([0, 0]);
+    });
+
+    it("置く 0 は +0（-￥0 と表示させない）", () => {
+      expectPlusZero(at(valuesFor(["2026-05"], [], "expenseYen"), 0));
+    });
+  });
+
+  describe("見る欄", () => {
+    it("expenseYen を指定すると支出を返す", () => {
+      expect(valuesFor(["2026-05"], [total("2026-05", 100, 900)], "expenseYen")).toEqual([100]);
+    });
+
+    it("incomeYen を指定すると収入を返す", () => {
+      expect(valuesFor(["2026-05"], [total("2026-05", 100, 900)], "incomeYen")).toEqual([900]);
+    });
+
+    it("収入だけの期間でも、支出は 0 として返る", () => {
+      expect(valuesFor(["2026-05"], [total("2026-05", 0, 900)], "expenseYen")).toEqual([0]);
+    });
+  });
+
+  describe("端のケース", () => {
+    it("期間が空なら空配列", () => {
+      expect(valuesFor([], [total("2026-05", 100)], "expenseYen")).toEqual([]);
+    });
+
+    it("集計に余分な期間があっても無視する", () => {
+      const totals = [total("2026-05", 100), total("2026-99", 999)];
+
+      expect(valuesFor(["2026-05"], totals, "expenseYen")).toEqual([100]);
+    });
+
+    it("同じ期間を2回渡せば、同じ値が2つ返る", () => {
+      expect(valuesFor(["2026-05", "2026-05"], [total("2026-05", 100)], "expenseYen")).toEqual([
+        100, 100,
+      ]);
+    });
+  });
+
+  describe("集計関数と組み合わせる", () => {
+    it("sumByMonth の結果をそのまま渡せる", () => {
+      const transactions = [
+        tx({ date: "2026-05-01", amountYen: -1000 }),
+        tx({ date: "2026-07-01", amountYen: -3000 }),
+      ];
+      const months = sumByMonth(transactions);
+
+      expect(valuesFor(["2026-05", "2026-06", "2026-07"], months, "expenseYen")).toEqual([
+        1000, 0, 3000,
+      ]);
+    });
+
+    it("カテゴリで絞った集計は、その月に無くても軸がずれない", () => {
+      const transactions = [
+        tx({ date: "2026-05-01", amountYen: -1000, category: "食費" }),
+        tx({ date: "2026-06-01", amountYen: -2000, category: "交通費" }),
+        tx({ date: "2026-07-01", amountYen: -3000, category: "食費" }),
+      ];
+      const periods = periodsOf(sumByMonth(transactions));
+      const food = sumByMonth(inCategory(transactions, "食費"));
+
+      expect(valuesFor(periods, food, "expenseYen")).toEqual([1000, 0, 3000]);
+    });
+
+    it("sumByYear の結果も同じ形で渡せる", () => {
+      const transactions = [
+        tx({ date: "2025-05-01", amountYen: -1000 }),
+        tx({ date: "2027-05-01", amountYen: -3000 }),
+      ];
+
+      expect(valuesFor(["2025", "2026", "2027"], sumByYear(transactions), "expenseYen")).toEqual([
+        1000, 0, 3000,
+      ]);
+    });
   });
 });

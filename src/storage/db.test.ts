@@ -154,10 +154,10 @@ async function seedAllStores(db: IDBDatabase): Promise<void> {
 }
 
 describe("openDatabase", () => {
-  it('データベース名は "kakeibo"、バージョンは 2', async () => {
+  it('データベース名は "kakeibo"、バージョンは 4', async () => {
     const db = await freshDatabase();
     expect(db.name).toBe("kakeibo");
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(4);
   });
 
   it("6つのオブジェクトストアを作る", async () => {
@@ -213,7 +213,7 @@ describe("openDatabase", () => {
     const second = await openDatabase(factory);
 
     expect(second.name).toBe("kakeibo");
-    expect(second.version).toBe(2);
+    expect(second.version).toBe(4);
     expect(storeNames(second)).toEqual([
       "budgets",
       "categories",
@@ -295,14 +295,14 @@ function v1Transaction(overrides: Partial<V1Transaction> = {}): V1Transaction {
   };
 }
 
-describe("v1 から v2 への移行", () => {
+describe("v1 から最新への移行", () => {
   it("v1 のデータベースを開くと、増えた2つのストアができる", async () => {
     const factory = new IDBFactory();
     await openVersion1(factory, []);
 
     const db = await openDatabase(factory);
 
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(4);
     expect(storeNames(db)).toEqual([
       "budgets",
       "categories",
@@ -428,6 +428,163 @@ describe("v1 から v2 への移行", () => {
   });
 });
 
+/** v3 までのカテゴリマスタ。住居・美容が無い（v4 で足したもの） */
+const OLD_CATEGORIES: CategoryRecord[] = [
+  { name: "サブスク", color: "#2fbf6b", order: 0 },
+  { name: "交通費", color: "#ef6a6a", order: 1 },
+  { name: "光熱費", color: "#e8b84b", order: 2 },
+  { name: "医療", color: "#9b7cf0", order: 3 },
+  { name: "娯楽", color: "#4aa8e8", order: 4 },
+  { name: "日用品", color: "#f08ab0", order: 5 },
+  { name: "通信費", color: "#2f9fa8", order: 6 },
+  { name: "食費", color: "#e0813c", order: 7 },
+  { name: INCOME, color: "#3ddc97", order: 8 },
+  { name: UNCATEGORIZED, color: "#5d6b64", order: 9 },
+];
+
+/**
+ * 古いスキーマで作って、カテゴリマスタを入れてから閉じる。
+ *
+ * 作るのは categories と transactions だけでよい。残りのストアは最新の
+ * upgrade が「無ければ作る」ので、移行の経路としては同じところを通る。
+ */
+async function openOldVersion(
+  factory: IDBFactory,
+  version: number,
+  categories: readonly CategoryRecord[],
+): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = factory.open("kakeibo", version);
+    request.onupgradeneeded = () => {
+      const store = request.result.createObjectStore("categories", { keyPath: "name" });
+      for (const record of categories) {
+        store.put(record);
+      }
+      request.result.createObjectStore("transactions", { keyPath: "id" }).createIndex("date", "date");
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+}
+
+async function categoryNamesOf(db: IDBDatabase): Promise<string[]> {
+  return (await getAllCategories(db)).map((record) => record.name);
+}
+
+/**
+ * v4 で増えたのはカテゴリの初期値だけ。ストアは増えていないので、見るのは
+ * 「既に使っているマスタに足りない分が入るか」と「それ以外を触らないか」。
+ */
+describe("古いバージョンから v4 への移行", () => {
+  it("v4 で増えたカテゴリが、既に使っているマスタにも入る", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 2, OLD_CATEGORIES);
+
+    const db = await openDatabase(factory);
+
+    expect(await categoryNamesOf(db)).toEqual(expect.arrayContaining(["住居", "美容"]));
+  });
+
+  it("既にあったカテゴリは1件も消えない", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 2, OLD_CATEGORIES);
+
+    const db = await openDatabase(factory);
+
+    expect(await categoryNamesOf(db)).toEqual(
+      expect.arrayContaining(OLD_CATEGORIES.map((record) => record.name)),
+    );
+  });
+
+  it("既にあったカテゴリの色を変えない", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 2, OLD_CATEGORIES);
+
+    const db = await openDatabase(factory);
+    const records = await getAllCategories(db);
+
+    for (const before of OLD_CATEGORIES) {
+      expect(records.find((record) => record.name === before.name)?.color).toBe(before.color);
+    }
+  });
+
+  it("足したカテゴリの色が、既存のどれとも重ならない", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 2, OLD_CATEGORIES);
+
+    const db = await openDatabase(factory);
+    const colors = (await getAllCategories(db)).map((record) => record.color);
+
+    expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  /**
+   * 移行を「起動のたびに足りない初期値を入れる」形にすると、ユーザーが消した
+   * カテゴリが次の起動で復活する。**バージョンに紐づいていることを固定する。**
+   */
+  it("ユーザーが消していたカテゴリを復活させない", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(
+      factory,
+      2,
+      OLD_CATEGORIES.filter((record) => record.name !== "娯楽"),
+    );
+
+    const db = await openDatabase(factory);
+
+    expect(await categoryNamesOf(db)).not.toContain("娯楽");
+  });
+
+  it("v4 で足したカテゴリを消してから開き直しても、復活しない", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 2, OLD_CATEGORIES);
+
+    const first = await openDatabase(factory);
+    const tx = first.transaction("categories", "readwrite");
+    tx.objectStore("categories").delete("住居");
+    await new Promise((resolve) => {
+      tx.oncomplete = resolve;
+    });
+    first.close();
+
+    const second = await openDatabase(factory);
+
+    expect(await categoryNamesOf(second)).not.toContain("住居");
+  });
+
+  it("マスタを空にしていた場合でも、増えた分だけを入れる", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 2, []);
+
+    const db = await openDatabase(factory);
+
+    expect(await categoryNamesOf(db)).toEqual(["住居", "美容"]);
+  });
+
+  it("取引は触らない", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 2, OLD_CATEGORIES);
+
+    const db = await openDatabase(factory);
+
+    expect(await getAllTransactions(db)).toEqual([]);
+  });
+
+  /**
+   * v3 は開発中に「バージョンだけ上げて中身が無い」状態で使われた
+   * （`schema.ts`）。**そのデータベースにも足りるのが、番号を 4 にした理由。**
+   */
+  it("中身の無い v3 のデータベースにも足りる", async () => {
+    const factory = new IDBFactory();
+    await openOldVersion(factory, 3, OLD_CATEGORIES);
+
+    const db = await openDatabase(factory);
+
+    expect(await categoryNamesOf(db)).toEqual(expect.arrayContaining(["住居", "美容"]));
+  });
+});
+
 /**
  * 別のタブが古いバージョンで開いたままだと versionchange が始められない。
  * v1 しか無かった間は upgrade 自体が起きなかったので、この経路は表に出なかった。
@@ -450,7 +607,7 @@ describe("他の接続に阻まれたとき", () => {
     held.close();
     const db = await openDatabase(factory);
 
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(4);
     expect(storeNames(db)).toContain("categories");
   });
 });
