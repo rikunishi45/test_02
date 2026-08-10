@@ -3,11 +3,13 @@ import type { CategoryRule } from "./classify.js";
 export const CATEGORIES = [
   "食費",
   "日用品",
+  "住居",
   "光熱費",
   "通信費",
   "サブスク",
   "交通費",
   "医療",
+  "美容",
   "娯楽",
 ] as const;
 
@@ -65,6 +67,14 @@ export const DEFAULT_CATEGORY_RULES: readonly CategoryRule[] = [
   { pattern: "nttドコモ", category: "通信費" },
   { pattern: "ntt docomo", category: "通信費" },
 
+  // --- 住居 ---
+  // 家賃は口座振替の摘要として「◯◯マンション 家賃」の形で来る。店名ではなく
+  // 費目そのものの語なので、部分一致でも他所へ広がらない。
+  // 「管理費」は入れない——サービスの管理費・カードの管理費にも当たる。
+  { pattern: "家賃", category: "住居" },
+  { pattern: "賃料", category: "住居" },
+  { pattern: "共益費", category: "住居" },
+
   // --- 光熱費 ---
   // 「ガス」「水道」を単体で置かない。`ガスト`（飲食チェーン）が光熱費になり、
   // `水道橋店` を含む店名も同じ穴を踏む。会社名まで含めて初めて安全になる。
@@ -120,6 +130,16 @@ export const DEFAULT_CATEGORY_RULES: readonly CategoryRule[] = [
   { pattern: "タクシー", category: "交通費" },
   { pattern: "エネオス", category: "交通費" },
   { pattern: "eneos", category: "交通費" },
+
+  // --- 美容 ---
+  // 「美容」単体にしない。`美容液`（日用品）や `美容外科`（医療）まで吸う。
+  // 医療より先に置く——`美容皮膚科` のような店名が現れたときに、どちらへ倒すかを
+  // ここの順序で決められる状態にしておく。
+  { pattern: "美容院", category: "美容" },
+  { pattern: "美容室", category: "美容" },
+  { pattern: "ヘアサロン", category: "美容" },
+  { pattern: "理容室", category: "美容" },
+  { pattern: "床屋", category: "美容" },
 
   // --- 医療 ---
   { pattern: "薬局", category: "医療" },

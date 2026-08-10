@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MAX_AMOUNT_DIGITS, pressKey, type KeypadKey } from "./keypad.js";
+import { MAX_AMOUNT_DIGITS, pressKey, typeAmount, type KeypadKey } from "./keypad.js";
 
 const DIGITS: readonly KeypadKey[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -226,5 +226,143 @@ describe("pressKey — 数として解釈できる形を保つ", () => {
     const result = press(Array.from({ length: MAX_AMOUNT_DIGITS + 3 }, () => "9" as KeypadKey));
 
     expect(Number.isSafeInteger(Number(result))).toBe(true);
+  });
+});
+
+describe("typeAmount — キーボードから打つ", () => {
+  describe("数字をそのまま受ける", () => {
+    it("打った数字の列がそのまま金額になる", () => {
+      expect(typeAmount("", "1234")).toBe("1234");
+    });
+
+    it.each(DIGITS)("1文字（%s）だけでも受ける", (key) => {
+      expect(typeAmount("", key)).toBe(key);
+    });
+
+    it("いま入っている値ではなく、渡された文字列で置き換える", () => {
+      expect(typeAmount("999", "12")).toBe("12");
+    });
+
+    it("1文字消した後の文字列も、そのまま受ける", () => {
+      expect(typeAmount("1234", "123")).toBe("123");
+    });
+
+    it("空文字列にすると空になる", () => {
+      expect(typeAmount("1234", "")).toBe("");
+    });
+  });
+
+  describe("先頭のゼロを作らない（pressKey と同じ形にする）", () => {
+    it("0 だけを打つと空になる", () => {
+      expect(typeAmount("", "0")).toBe("");
+    });
+
+    it("ゼロを並べただけなら空になる", () => {
+      expect(typeAmount("", "0000")).toBe("");
+    });
+
+    it("先頭のゼロを落とす", () => {
+      expect(typeAmount("", "0123")).toBe("123");
+    });
+
+    it("途中と末尾のゼロは残す", () => {
+      expect(typeAmount("", "1020")).toBe("1020");
+    });
+
+    it("結果は、空か、先頭がゼロでない数字の列になる", () => {
+      for (const raw of ["0", "00", "007", "1", "10", "0a0", "", "９"]) {
+        expect(typeAmount("", raw)).toMatch(/^$|^[1-9][0-9]*$/u);
+      }
+    });
+  });
+
+  describe("数字でない文字を落とす", () => {
+    it("桁区切りのカンマを落とす（入力欄に区切り付きで表示されるため）", () => {
+      expect(typeAmount("", "1,234")).toBe("1234");
+    });
+
+    it("通貨記号を落とす", () => {
+      expect(typeAmount("", "¥500")).toBe("500");
+    });
+
+    it("空白を落とす", () => {
+      expect(typeAmount("", " 12 34 ")).toBe("1234");
+    });
+
+    it("符号を落とす（符号は種別から決まる）", () => {
+      expect(typeAmount("", "-500")).toBe("500");
+    });
+
+    it("小数点を落とす（円に補助単位は無い）", () => {
+      expect(typeAmount("", "12.34")).toBe("1234");
+    });
+
+    it("数字が1つも無ければ空になる", () => {
+      expect(typeAmount("500", "あいう")).toBe("");
+    });
+  });
+
+  describe("全角で打たれても受ける（IME を切り忘れる）", () => {
+    it("全角数字を半角に畳む", () => {
+      expect(typeAmount("", "１２３４")).toBe("1234");
+    });
+
+    it("全角と半角が混ざっても畳む", () => {
+      expect(typeAmount("", "１2３4")).toBe("1234");
+    });
+
+    it("全角の区切りと通貨記号を落とす", () => {
+      expect(typeAmount("", "￥１，２００")).toBe("1200");
+    });
+
+    it("全角のゼロも先頭ゼロとして落とす", () => {
+      expect(typeAmount("", "０１２")).toBe("12");
+    });
+  });
+
+  describe("桁数の上限", () => {
+    it("上限ちょうどは受ける", () => {
+      expect(typeAmount("", atLimit())).toBe(atLimit());
+    });
+
+    it("上限を1桁超えたら、いまの値のまま変えない", () => {
+      expect(typeAmount("500", "1".repeat(MAX_AMOUNT_DIGITS + 1))).toBe("500");
+    });
+
+    it("切り詰めない（貼り付けた額と画面の額を食い違わせない）", () => {
+      const raw = "9".repeat(MAX_AMOUNT_DIGITS + 5);
+
+      expect(typeAmount("", raw)).not.toBe(raw.slice(0, MAX_AMOUNT_DIGITS));
+      expect(typeAmount("", raw)).toBe("");
+    });
+
+    it("先頭ゼロを落とした後の桁数で判定する", () => {
+      const raw = "0".repeat(5) + "123";
+
+      expect(typeAmount("", raw)).toBe("123");
+    });
+
+    it("数字以外を落とした後の桁数で判定する", () => {
+      const grouped = "1,234,567";
+
+      expect(typeAmount("", grouped)).toBe("1234567");
+    });
+  });
+
+  describe("pressKey と同じ値の空間に収まる", () => {
+    it("空でなければ安全な整数として読める", () => {
+      const amount = typeAmount("", "1,234,567");
+
+      expect(Number.isSafeInteger(Number(amount))).toBe(true);
+      expect(Number(amount)).toBe(1234567);
+    });
+
+    it("打った後にテンキーを押しても、続きの桁として足せる", () => {
+      expect(pressKey(typeAmount("", "12"), "3")).toBe("123");
+    });
+
+    it("テンキーで作った値を打ち直せる", () => {
+      expect(typeAmount(press(["1", "2", "00"]), "1,200")).toBe("1200");
+    });
   });
 });

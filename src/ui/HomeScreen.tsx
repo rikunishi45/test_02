@@ -136,15 +136,21 @@ function toneStyle(tone: "expense" | "income" | "plain") {
   return { color: "var(--fg)" };
 }
 
-/** 支出の増減。増えたら赤、減ったら緑（支出なので「増えた」が悪い側） */
+/**
+ * 支出の増減を**元帳の符号**で出す。支出が増えた＝手元の金は減った＝マイナス。
+ *
+ * 色は符号だけで決める（マイナスは赤、プラスは緑）。反転は壁の中
+ * （`negateExpense`）——画面で `-yen` と書くと反転が2か所になる。
+ */
 function Delta({ yen }: { yen: number }) {
-  if (yen === 0) {
+  const signed = negateExpense(yen);
+  if (signed === 0) {
     return <span style={styles.deltaFlat}>先月と同じ</span>;
   }
   return (
-    <span style={yen > 0 ? styles.deltaUp : styles.deltaDown}>
-      先月比 {yen > 0 ? "+" : "−"}
-      {YEN.format(Math.abs(yen))}
+    <span style={signed < 0 ? styles.deltaMinus : styles.deltaPlus}>
+      先月比 {signed > 0 ? "+" : "−"}
+      {YEN.format(Math.abs(signed))}
     </span>
   );
 }
@@ -198,13 +204,15 @@ const styles = {
     whiteSpace: "nowrap",
   },
   // marginLeft はカードの中で金額に密着させないため。表のセルでは右寄せなので効かない。
-  deltaUp: {
+  // 名前は符号で付ける。「増えた／減った」で付けると、支出の増加が元帳では
+  // マイナスであることと食い違い、色の割り当てを間違える。
+  deltaMinus: {
     fontSize: 12,
     color: "var(--danger)",
     fontVariantNumeric: "tabular-nums",
     marginLeft: 6,
   },
-  deltaDown: {
+  deltaPlus: {
     fontSize: 12,
     color: "var(--income)",
     fontVariantNumeric: "tabular-nums",

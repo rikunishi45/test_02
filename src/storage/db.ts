@@ -1,6 +1,6 @@
 import { UNCATEGORIZED, type LearnedCategories } from "../category/classify.js";
 import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
-import { defaultCategories } from "../category/default-categories.js";
+import { defaultCategories, withAddedCategories } from "../category/default-categories.js";
 import type { CategoryChange } from "../category/manage.js";
 import type { BackupData } from "./backup.js";
 import {
@@ -83,6 +83,30 @@ function backfillMemo(store: IDBObjectStore): void {
 }
 
 /**
+ * v4 で初期値に足したカテゴリ。
+ *
+ * `DEFAULT_CATEGORY_RULES` から導かない。**これは「v4 で何を足したか」の記録**で、
+ * ルールは今後も増える。導く形にすると、次にカテゴリを1つ足したときに v4 の
+ * 移行が別のものを足すようになり、どのバージョンで何が入ったか分からなくなる。
+ */
+const CATEGORIES_ADDED_IN_V4: readonly string[] = ["住居", "美容"];
+
+/**
+ * マスタに無いカテゴリだけを足す。**versionchange の中でだけ呼ぶ。**
+ *
+ * 起動のたびに呼ぶと、ユーザーが消したカテゴリが次の起動で復活する。
+ * 足す内容の組み立ては壁の中（`withAddedCategories`）。
+ */
+function addMissingCategories(store: IDBObjectStore, names: readonly string[]): void {
+  const request = store.getAll() as IDBRequest<CategoryRecord[]>;
+  request.onsuccess = () => {
+    for (const record of withAddedCategories(request.result, names)) {
+      store.put(record);
+    }
+  };
+}
+
+/**
  * データベースを開く。必要ならスキーマを上げる。
  *
  * **`onblocked` を握るのが要。** 別のタブが古いバージョンで開いたままだと
@@ -134,6 +158,14 @@ export function openDatabase(indexedDB: IDBFactory): Promise<IDBDatabase> {
         // 予算画面は月単位で開くので、月で引ける索引を張る。
         store.createIndex("month", "month");
       }
+
+      // --- v4 で増えたもの ---
+      // 直前にストアを作った経路では初期値に含まれているので、ここは何も足さない
+      // （同じトランザクションなので、上の put は getAll から見える）。
+      addMissingCategories(
+        request.transaction!.objectStore(STORE_CATEGORIES),
+        CATEGORIES_ADDED_IN_V4,
+      );
 
       // 新規作成なら取引が空なので、埋め戻しは何もせずに終わる。`oldVersion` で
       // 分岐しないのはそのため——**どちらの経路でも結果が同じ条件を書くと、

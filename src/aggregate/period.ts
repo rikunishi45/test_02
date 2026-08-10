@@ -166,6 +166,11 @@ export function sumByCategory(transactions: readonly StoredTransaction[]): Categ
  *
  * 反転そのものは1行だが、**このプロジェクトで `-0` を4回踏んでいる**ので、
  * 判定を画面側に置かず壁の中に固定する。
+ *
+ * **支出の増減（`deltaYen`）にも同じものを使う。** 増減は符号付きで来るが、
+ * 意味は「支出がいくら動いたか」なので元帳の符号に直す向きは同じ——支出が
+ * 増えれば元帳ではマイナスに動く。画面側で `-delta` と書くと、ここと合わせて
+ * 反転が2か所になる（層をまたいだ二重反転はこのプロジェクトで実際に起きている）。
  */
 export function negateExpense(expenseYen: number): number {
   return expenseYen === 0 ? 0 : -expenseYen;
@@ -184,6 +189,27 @@ export function negateExpense(expenseYen: number): number {
  */
 export function netYen(total: Pick<PeriodTotal, "expenseYen" | "incomeYen">): number {
   return total.incomeYen - total.expenseYen;
+}
+
+/**
+ * 期間キーの並びに合わせて、1本の系列（グラフの棒の値）を取り出す。
+ * **`totals` に無い期間は 0。**
+ *
+ * `sumByMonth` は取引のある月しか返さない。返ってきた配列をそのまま棒にすると、
+ * **支出が1件も無い月が詰められて、以降の棒がすべて隣の月のラベルの上に並ぶ。**
+ * カテゴリ別の推移では「その月は使わなかった」が普通に起きるので、必ず通る道になる。
+ * 目で見ても「ラベルと棒が1つずれている」ことには気づけない。
+ *
+ * `periods` は全期間のキー（絞り込む前の `sumByMonth` の `period`）を渡す。
+ * 系列を切り替えても軸が動かないよう、軸の元は常に全体から作る。
+ */
+export function valuesFor(
+  periods: readonly string[],
+  totals: readonly PeriodTotal[],
+  field: "expenseYen" | "incomeYen",
+): number[] {
+  const byPeriod = new Map(totals.map((total) => [total.period, total]));
+  return periods.map((period) => byPeriod.get(period)?.[field] ?? 0);
 }
 
 /** 指定した月（"YYYY-MM"）の取引だけを取り出す */

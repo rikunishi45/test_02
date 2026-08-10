@@ -5,7 +5,7 @@ import {
   type ManualEntryField,
   type ManualEntryKind,
 } from "../cash/manual-entry.js";
-import { pressKey, type KeypadKey } from "../cash/keypad.js";
+import { pressKey, typeAmount, type KeypadKey } from "../cash/keypad.js";
 import { categoryFor, type LearnedCategories } from "../category/classify.js";
 import { DEFAULT_CATEGORY_RULES } from "../category/default-rules.js";
 import { selectableCategories } from "../category/manage.js";
@@ -171,9 +171,30 @@ export function EntryScreen({ db, categories, learned, onSaved }: Props) {
 
           <div style={styles.display}>
             <span style={styles.sign}>{kind === "expense" ? "−" : "+"}</span>
-            <output style={kind === "expense" ? styles.amount : styles.amountIncome}>
-              ¥{GROUPED.format(Number(amount === "" ? "0" : amount))}
-            </output>
+            {/*
+              テンキーと同じ状態（`amount`）を直接打てるようにする。値の解釈は
+              壁の中（`typeAmount`）で、ここは打たれた文字列を渡すだけ。
+
+              `type="number"` にしない。桁区切りが出せず、`e` や `-` が打てて
+              しまう（そのとき `value` は空文字列で返るので、打った内容が
+              画面から消える）。数字キーボードは inputMode で出す。
+
+              通貨記号を value に含めるのは、記号と数字を離さないため。別の要素に
+              分けると、右寄せの入力欄が伸びて `¥` と数字の間が空く。`typeAmount`
+              が数字以外を落とすので、記号ごと打ち直されても値は変わらない。
+            */}
+            <input
+              type="text"
+              inputMode="numeric"
+              aria-label="金額"
+              placeholder="¥0"
+              style={kind === "expense" ? styles.amount : styles.amountIncome}
+              value={amount === "" ? "" : `¥${GROUPED.format(Number(amount))}`}
+              onChange={(e) => {
+                const typed = e.target.value;
+                setAmount((current) => typeAmount(current, typed));
+              }}
+            />
             <button
               type="button"
               style={styles.clear}
@@ -316,8 +337,13 @@ const styles = {
     padding: "10px 12px",
   },
   sign: { fontSize: 20, color: "var(--muted)" },
+  // 入力欄だが、枠は外側の display が持っている。二重に枠を出さない
   amount: {
     flex: 1,
+    minWidth: 0,
+    background: "transparent",
+    border: 0,
+    padding: 0,
     textAlign: "right",
     fontSize: 30,
     fontWeight: 650,
@@ -326,6 +352,10 @@ const styles = {
   },
   amountIncome: {
     flex: 1,
+    minWidth: 0,
+    background: "transparent",
+    border: 0,
+    padding: 0,
     textAlign: "right",
     fontSize: 30,
     fontWeight: 650,

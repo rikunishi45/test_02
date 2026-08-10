@@ -23,6 +23,8 @@ export const CATEGORY_PALETTE = [
   "#f08ab0",
   "#2f9fa8",
   "#e0813c",
+  "#8fbf3f",
+  "#5f6fd9",
 ] as const;
 
 /** 収入は支出のパレットから外す。内訳の円グラフに現れないので、色をぶつけても意味が無い */
@@ -76,4 +78,55 @@ export function defaultCategories(rules: readonly CategoryRule[]): CategoryRecor
     { name: INCOME, color: INCOME_COLOR, order: spending.length },
     { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: spending.length + 1 },
   ];
+}
+
+/** 収入・未分類は支出カテゴリの後ろに固定する。並べ替えの対象にしない */
+function isFixed(name: string): boolean {
+  return name === INCOME || name === UNCATEGORIZED;
+}
+
+/**
+ * 既存のマスタに、まだ無いカテゴリを足したマスタ全体を返す。
+ * **足すものが無ければ空配列**——呼び出し側が「書くものが無い」を分岐せずに済む。
+ *
+ * 初期値（`defaultCategories`）はストアを作るときにしか入らない。後から
+ * `DEFAULT_CATEGORY_RULES` にカテゴリを足しても、既に使っているデータベースの
+ * マスタには現れず、ルールが返した名前は**マスタに無い**ので
+ * `reclassifyTransactions` が未分類に落とす。その差を埋めるための関数。
+ *
+ * **呼ぶのはスキーマのバージョンを上げたときだけ**（`db.ts`）。起動のたびに
+ * 呼ぶと、ユーザーが消したカテゴリが次の起動で復活する。
+ *
+ * 色は**まだ使われていないパレットの色**から選ぶ。既定の色をそのまま使うと、
+ * ユーザーが色を変えていない限り必ず既存のカテゴリと衝突する。
+ *
+ * 並びは支出カテゴリの末尾、収入・未分類の手前。`order` は 0 から振り直す
+ * （`moveCategory` と同じ方針——飛び番や重複を残さない）。
+ */
+export function withAddedCategories(
+  existing: readonly CategoryRecord[],
+  names: readonly string[],
+): CategoryRecord[] {
+  const known = new Set(existing.map((record) => record.name));
+  const added = [...new Set(names)].filter((name) => !known.has(name));
+  if (added.length === 0) {
+    return [];
+  }
+
+  const used = new Set(existing.map((record) => record.color));
+  const fresh = added.map((name, index) => {
+    const color =
+      CATEGORY_PALETTE.find((candidate) => !used.has(candidate)) ??
+      CATEGORY_PALETTE[index % CATEGORY_PALETTE.length]!;
+    used.add(color);
+    return { name, color, order: 0 };
+  });
+
+  const ordered = [...existing].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+
+  return [
+    ...ordered.filter((record) => !isFixed(record.name)),
+    ...fresh,
+    ...ordered.filter((record) => isFixed(record.name)),
+  ].map((record, index) => ({ ...record, order: index }));
 }

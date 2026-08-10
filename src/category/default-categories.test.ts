@@ -7,6 +7,7 @@ import {
   CATEGORY_PALETTE,
   INCOME_COLOR,
   UNCATEGORIZED_COLOR,
+  withAddedCategories,
 } from "./default-categories.js";
 import { DEFAULT_CATEGORY_RULES } from "./default-rules.js";
 
@@ -50,8 +51,12 @@ function only(records: readonly CategoryRecord[], name: string): CategoryRecord 
 }
 
 describe("CATEGORY_PALETTE", () => {
-  it("8色ある（初期カテゴリの数以上であること）", () => {
-    expect(CATEGORY_PALETTE).toHaveLength(8);
+  it("10色ある（初期カテゴリの数以上であること）", () => {
+    expect(CATEGORY_PALETTE).toHaveLength(10);
+  });
+
+  it("同じ色が2つ無い", () => {
+    expect(new Set(CATEGORY_PALETTE).size).toBe(CATEGORY_PALETTE.length);
   });
 
   it("すべて #rrggbb 形式", () => {
@@ -493,5 +498,170 @@ describe("categoryNames", () => {
     const expected = [...records].sort((a, b) => a.order - b.order).map((r) => r.name);
 
     expect(categoryNames(records)).toEqual(expected);
+  });
+});
+
+describe("withAddedCategories", () => {
+  /** 支出2件 + 収入 + 未分類。既に使っているマスタの最小形 */
+  function master(): CategoryRecord[] {
+    return [
+      { name: "食費", color: CATEGORY_PALETTE[0]!, order: 0 },
+      { name: "日用品", color: CATEGORY_PALETTE[1]!, order: 1 },
+      { name: INCOME, color: INCOME_COLOR, order: 2 },
+      { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 3 },
+    ];
+  }
+
+  describe("足すものが無いとき", () => {
+    it("空配列を返す（書き戻す必要が無い）", () => {
+      expect(withAddedCategories(master(), ["食費"])).toEqual([]);
+    });
+
+    it("名前を1つも渡さなければ空配列", () => {
+      expect(withAddedCategories(master(), [])).toEqual([]);
+    });
+
+    it("マスタが空でも、足す名前が無ければ空配列", () => {
+      expect(withAddedCategories([], [])).toEqual([]);
+    });
+
+    it("既存の名前だけを複数渡しても空配列", () => {
+      expect(withAddedCategories(master(), ["日用品", "食費", INCOME])).toEqual([]);
+    });
+  });
+
+  describe("足すとき", () => {
+    it("マスタ全体を返す（足した分だけではない）", () => {
+      const result = withAddedCategories(master(), ["住居"]);
+
+      expect(namesOf(result)).toEqual(["食費", "日用品", "住居", INCOME, UNCATEGORIZED]);
+    });
+
+    it("新しいカテゴリは支出の末尾・収入の手前に入る", () => {
+      const result = withAddedCategories(master(), ["住居", "美容"]);
+
+      expect(namesOf(result)).toEqual([
+        "食費",
+        "日用品",
+        "住居",
+        "美容",
+        INCOME,
+        UNCATEGORIZED,
+      ]);
+    });
+
+    it("渡した順に並ぶ", () => {
+      const result = withAddedCategories(master(), ["美容", "住居"]);
+
+      expect(namesOf(result).slice(2, 4)).toEqual(["美容", "住居"]);
+    });
+
+    it("order を 0 から振り直す", () => {
+      const result = withAddedCategories(master(), ["住居"]);
+
+      expect(result.map((r) => r.order)).toEqual([0, 1, 2, 3, 4]);
+    });
+
+    it("既存の名前は足さず、無いものだけ足す", () => {
+      const result = withAddedCategories(master(), ["食費", "住居"]);
+
+      expect(namesOf(result)).toEqual(["食費", "日用品", "住居", INCOME, UNCATEGORIZED]);
+    });
+
+    it("同じ名前を2回渡しても1件しか足さない", () => {
+      const result = withAddedCategories(master(), ["住居", "住居"]);
+
+      expect(namesOf(result).filter((name) => name === "住居")).toEqual(["住居"]);
+    });
+
+    it("既存の色・名前は変えない", () => {
+      const result = withAddedCategories(master(), ["住居"]);
+
+      expect(only(result, "食費").color).toBe(CATEGORY_PALETTE[0]);
+      expect(only(result, INCOME).color).toBe(INCOME_COLOR);
+      expect(only(result, UNCATEGORIZED).color).toBe(UNCATEGORIZED_COLOR);
+    });
+
+    it("マスタが空でも足せる（収入・未分類が無くても落ちない）", () => {
+      const result = withAddedCategories([], ["住居"]);
+
+      expect(result).toEqual([{ name: "住居", color: CATEGORY_PALETTE[0], order: 0 }]);
+    });
+  });
+
+  describe("色の選び方", () => {
+    it("まだ使われていないパレットの色を使う", () => {
+      const result = withAddedCategories(master(), ["住居"]);
+
+      expect(only(result, "住居").color).toBe(CATEGORY_PALETTE[2]);
+    });
+
+    it("足した色どうしも重ならない", () => {
+      const result = withAddedCategories(master(), ["住居", "美容"]);
+
+      expect(only(result, "住居").color).toBe(CATEGORY_PALETTE[2]);
+      expect(only(result, "美容").color).toBe(CATEGORY_PALETTE[3]);
+    });
+
+    it("既存のカテゴリと色が重ならない", () => {
+      const result = withAddedCategories(master(), ["住居", "美容"]);
+      const colors = colorsOf(result);
+
+      expect(new Set(colors).size).toBe(colors.length);
+    });
+
+    it("パレットの途中が空いていれば、その色から埋める", () => {
+      const existing: CategoryRecord[] = [
+        { name: "食費", color: CATEGORY_PALETTE[1]!, order: 0 },
+      ];
+
+      expect(only(withAddedCategories(existing, ["住居"]), "住居").color).toBe(
+        CATEGORY_PALETTE[0],
+      );
+    });
+
+    it("パレットを使い切っていたら先頭から巡る", () => {
+      const existing: CategoryRecord[] = CATEGORY_PALETTE.map((color, index) => ({
+        name: `c${String(index)}`,
+        color,
+        order: index,
+      }));
+
+      const result = withAddedCategories(existing, ["住居", "美容"]);
+
+      expect(only(result, "住居").color).toBe(CATEGORY_PALETTE[0]);
+      expect(only(result, "美容").color).toBe(CATEGORY_PALETTE[1]);
+    });
+  });
+
+  describe("入力を書き換えない", () => {
+    it("渡したマスタの配列も要素も変わらない", () => {
+      const existing = master();
+      const snapshot = structuredClone(existing);
+
+      withAddedCategories(existing, ["住居"]);
+
+      expect(existing).toEqual(snapshot);
+    });
+
+    it("凍結された配列を渡しても動く", () => {
+      const existing = Object.freeze(master().map((r) => Object.freeze(r)));
+
+      expect(namesOf(withAddedCategories(existing, ["住居"]))).toContain("住居");
+    });
+  });
+
+  it("並びが崩れたマスタでも order の昇順に整え直す", () => {
+    const existing: CategoryRecord[] = [
+      { name: UNCATEGORIZED, color: UNCATEGORIZED_COLOR, order: 9 },
+      { name: "日用品", color: CATEGORY_PALETTE[1]!, order: 5 },
+      { name: "食費", color: CATEGORY_PALETTE[0]!, order: 2 },
+      { name: INCOME, color: INCOME_COLOR, order: 7 },
+    ];
+
+    const result = withAddedCategories(existing, ["住居"]);
+
+    expect(namesOf(result)).toEqual(["食費", "日用品", "住居", INCOME, UNCATEGORIZED]);
+    expect(result.map((r) => r.order)).toEqual([0, 1, 2, 3, 4]);
   });
 });
